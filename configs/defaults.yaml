@@ -1,0 +1,61 @@
+experiment:
+  name: qualispeech_to_sap
+  method: baseline
+  seed: 13
+  ratio: 1.0
+  split_protocol: paper_faithful
+  pair_id: null
+  sap_target: null
+  qs_aux: null
+  stage: train
+
+training:
+  optimizer: adamw
+  loss: mse
+  huber_delta: 1.0
+  lr: 1.0e-5
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+  scheduler: none
+  warmup_ratio: 0.1
+  max_epochs: 30
+  patience: 5
+  precision: auto
+  gradient_accumulation_steps: 1
+  max_total_sec: 180
+  resume: true
+
+data:
+  sample_rate: 16000
+  num_workers: 4
+  val_size_default: 500
+  label_sampling: utterance_stratified
+
+evaluation:
+  primary_metric: mse
+  tie_break_metrics: [lcc, srcc]
+  n_bootstrap: 10000
+  permutation_test_samples: 10000
+  export_clipped_metrics: true
+
+model:
+  name: wavlm_base
+  revision: main
+  cache_dir: ./data/cache/huggingface
+  apply_spec_augment: false
+  layerdrop: 0.0
+  head_hidden_dim: null
+  dropout: 0.1
+  max_total_sec: 180
+  gradient_checkpointing: false
+  output_hidden_states: false
+
+results:
+  skip_if_complete: true
+  resume_from_last: true
+  save_predictions: true
+  save_resolved_config: true
+  export_tables: true
+  export_figures: true
+  export_report: true

@@ -1,0 +1,22 @@
+experiment:
+  method: ft
+  split_protocol: paper_faithful
+  ratio: 1.0
+ft:
+  head_reset: reuse_full_head
+  freeze_schedule: full_finetune
+  stage1:
+    max_epochs: 20
+    patience: 4
+    lr: 1.0e-5
+    weight_decay: 0.01
+    scheduler: none
+    gradient_accumulation_steps: 1
+  stage2:
+    max_epochs: 30
+    patience: 5
+    lr: 1.0e-5
+    weight_decay: 0.01
+    scheduler: none
+    gradient_accumulation_steps: 1
+

@@ -1,0 +1,5 @@
+pair_id: qs_dist_to_sap_vowel
+sap_target_task: sap_distorted_vowels
+sap_target_dim: distorted_vowels
+qs_aux_dim: distortion
+

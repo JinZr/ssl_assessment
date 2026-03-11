@@ -1,0 +1,5 @@
+pair_id: qs_overall_to_sap_intel
+sap_target_task: sap_intelligibility
+sap_target_dim: intelligibility
+qs_aux_dim: overall_quality
+

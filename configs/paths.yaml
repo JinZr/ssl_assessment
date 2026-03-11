@@ -1,0 +1,14 @@
+paths:
+  sap:
+    train_dir: ./data/raw/sap/train
+    dev_dir: ./data/raw/sap/dev
+  qualispeech:
+    root_dir: ./data/raw/qualispeech
+  processed:
+    sap_dir: ./data/processed/sap
+    qs_dir: ./data/processed/qualispeech
+    splits_dir: ./data/processed/splits
+    pairs_dir: ./data/processed/pairs
+  results_dir: ./results/runs
+  metadata_dir: ./results/metadata
+

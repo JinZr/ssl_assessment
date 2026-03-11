@@ -1,0 +1,4 @@
+task_name: sap_intelligibility
+target_dim: intelligibility
+paper_train_size: 5046
+paper_val_size: 500

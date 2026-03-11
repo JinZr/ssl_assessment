@@ -1,0 +1,5 @@
+experiment:
+  method: jt
+  split_protocol: paper_faithful
+  ratio: 1.0
+

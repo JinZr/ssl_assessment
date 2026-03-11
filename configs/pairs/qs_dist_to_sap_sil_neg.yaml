@@ -1,0 +1,4 @@
+pair_id: qs_dist_to_sap_sil_neg
+sap_target_task: sap_inappropriate_silences
+sap_target_dim: inappropriate_silences
+qs_aux_dim: distortion

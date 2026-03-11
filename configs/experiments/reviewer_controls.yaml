@@ -1,0 +1,38 @@
+experiment:
+  method: dual_head_jt
+  split_protocol: paper_faithful
+  ratio: 1.0
+reviewer:
+  controls:
+    - dual_head_jt
+    - sap_multi_task
+    - shuffled_labels
+    - speaker_disjoint_val
+    - stage2_head_reset
+    - freeze_schedule
+    - prompt_breakdown
+    - severity_breakdown
+    - etiology_breakdown
+    - negative_pairs
+    - huber_loss
+  jt:
+    dual_head: true
+  ft:
+    head_reset_options:
+      - reuse_full_head
+      - reset_last_linear_only
+      - reset_full_head
+    freeze_schedules:
+      - freeze_encoder
+      - unfreeze_last_4_layers
+      - full_finetune
+    loss_options:
+      - mse
+      - huber
+    huber_delta: 1.0
+  negative_pairs:
+    - qs_cont_to_sap_nat_neg
+    - qs_dist_to_sap_sil_neg
+  reviewer_protocols:
+    - speaker_disjoint
+

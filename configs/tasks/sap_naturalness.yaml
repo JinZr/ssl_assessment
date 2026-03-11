@@ -1,0 +1,4 @@
+task_name: sap_naturalness
+target_dim: naturalness
+paper_train_size: 5040
+paper_val_size: 500

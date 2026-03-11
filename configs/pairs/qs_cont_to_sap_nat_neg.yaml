@@ -1,0 +1,5 @@
+pair_id: qs_cont_to_sap_nat_neg
+sap_target_task: sap_naturalness
+sap_target_dim: naturalness
+qs_aux_dim: continuity
+

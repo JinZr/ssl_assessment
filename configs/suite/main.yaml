@@ -1,0 +1,31 @@
+prepare: false
+models:
+  - wavlm_base
+  - wavlm_base_plus
+  - wavlm_large
+  - w2v2_base
+  - w2v2_large_lv60
+  - w2v2_large_robust
+  - hubert_base
+  - hubert_large
+tasks: []
+pairs:
+  - qs_nat_to_sap_nat
+  - qs_cont_to_sap_sil
+  - qs_dist_to_sap_vowel
+  - qs_dist_to_sap_cons
+  - qs_effort_to_sap_intel
+  - qs_overall_to_sap_intel
+methods:
+  - jt
+  - ft
+ratios:
+  - 1.0
+seeds:
+  - 13
+  - 17
+  - 23
+protocols:
+  - paper_faithful
+reviewer_controls: []
+

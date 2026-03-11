@@ -1,0 +1,67 @@
+prepare: true
+models:
+  - wavlm_base
+  - wavlm_base_plus
+  - wavlm_large
+  - w2v2_base
+  - w2v2_large_lv60
+  - w2v2_large_robust
+  - hubert_base
+  - hubert_large
+tasks:
+  - sap_naturalness
+  - sap_inappropriate_silences
+  - sap_distorted_vowels
+  - sap_imprecise_consonants
+  - sap_intelligibility
+pairs:
+  - qs_nat_to_sap_nat
+  - qs_cont_to_sap_sil
+  - qs_dist_to_sap_vowel
+  - qs_dist_to_sap_cons
+  - qs_effort_to_sap_intel
+  - qs_overall_to_sap_intel
+methods:
+  - baseline
+  - jt
+  - ft
+ratios:
+  - 0.25
+  - 0.5
+  - 0.75
+  - 1.0
+  - 1.5
+  - 2.0
+seeds:
+  - 13
+  - 17
+  - 23
+protocols:
+  - paper_faithful
+reviewer_controls:
+  - dual_head_jt
+  - sap_multi_task
+  - shuffled_labels
+  - speaker_disjoint_val
+  - stage2_head_reset
+  - freeze_schedule
+  - prompt_breakdown
+  - severity_breakdown
+  - etiology_breakdown
+  - negative_pairs
+  - huber_loss
+reviewer_protocols:
+  - speaker_disjoint
+reviewer_models:
+  - wavlm_base_plus
+  - w2v2_large_robust
+negative_pairs:
+  - qs_cont_to_sap_nat_neg
+  - qs_dist_to_sap_sil_neg
+loss_controls:
+  - mse
+  - huber
+summarize: true
+tables: true
+figures: true
+report: true

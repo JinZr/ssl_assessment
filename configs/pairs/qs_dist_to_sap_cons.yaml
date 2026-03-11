@@ -1,0 +1,5 @@
+pair_id: qs_dist_to_sap_cons
+sap_target_task: sap_imprecise_consonants
+sap_target_dim: imprecise_consonants
+qs_aux_dim: distortion
+

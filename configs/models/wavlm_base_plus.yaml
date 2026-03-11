@@ -1,0 +1,11 @@
+model:
+  name: wavlm_base_plus
+  revision: main
+  cache_dir: ./data/cache/huggingface
+  apply_spec_augment: false
+  layerdrop: 0.0
+  head_hidden_dim: null
+  dropout: 0.1
+  max_total_sec: 180
+  gradient_checkpointing: false
+

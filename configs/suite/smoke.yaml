@@ -1,0 +1,23 @@
+prepare: true
+models:
+  - wavlm_base
+tasks:
+  - sap_naturalness
+pairs:
+  - qs_nat_to_sap_nat
+methods:
+  - baseline
+  - jt
+  - ft
+ratios:
+  - 1.0
+seeds:
+  - 13
+protocols:
+  - paper_faithful
+reviewer_controls: []
+summarize: true
+tables: true
+figures: true
+report: true
+
