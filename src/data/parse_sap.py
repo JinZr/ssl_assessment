@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from tqdm.auto import tqdm
 
 from src.data.sap_dimension_map import canonicalize_dimension, normalize_dimension_name
 from src.utils.audio import probe_audio
@@ -89,7 +90,11 @@ def parse_sap_split(split_dir: str | Path) -> tuple[pd.DataFrame, pd.DataFrame, 
     discarded_examples: list[dict[str, Any]] = []
     json_paths, duplicates = _resolve_speaker_jsons(split_path)
 
-    for speaker_json_path in json_paths:
+    for speaker_json_path in tqdm(
+        json_paths,
+        desc=f"SAP {split_path.name} speakers",
+        unit="speaker",
+    ):
         payload = read_json(speaker_json_path)
         speaker_id = payload.get("Contributor ID") or speaker_json_path.stem
         etiology = payload.get("Etiology", "") or ""
@@ -185,7 +190,11 @@ def parse_sap_dataset(
     all_utterances: list[pd.DataFrame] = []
     all_labels: list[pd.DataFrame] = []
     split_reports: list[dict[str, Any]] = []
-    for split_dir in [train_dir, dev_dir]:
+    for split_dir in tqdm(
+        [train_dir, dev_dir],
+        desc="SAP splits",
+        unit="split",
+    ):
         utterances, labels, report = parse_sap_split(split_dir)
         all_utterances.append(utterances)
         all_labels.append(labels)

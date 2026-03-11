@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from tqdm.auto import tqdm
 
 from src.data.parse_qualispeech import parse_qualispeech_dataset
 from src.data.parse_sap import parse_sap_dataset
@@ -47,7 +48,11 @@ def prepare_all(paths_config: dict[str, Any], task_configs: dict[str, dict[str, 
     parse_sap_dataset(paths["sap"]["train_dir"], paths["sap"]["dev_dir"], paths["processed"]["sap_dir"])
     parse_qualispeech_dataset(paths["qualispeech"]["root_dir"], paths["processed"]["qs_dir"])
 
-    for task_config in task_configs.values():
+    for task_config in tqdm(
+        task_configs.values(),
+        desc="Build SAP task splits",
+        unit="task",
+    ):
         build_sap_task_split(
             processed_sap_dir=paths["processed"]["sap_dir"],
             output_dir=paths["processed"]["splits_dir"],
@@ -69,7 +74,11 @@ def prepare_all(paths_config: dict[str, Any], task_configs: dict[str, dict[str, 
             paper_val_size=task_config.get("paper_val_size"),
         )
 
-    for pair_config in pair_configs.values():
+    for pair_config in tqdm(
+        pair_configs.values(),
+        desc="Build pair manifests",
+        unit="pair",
+    ):
         split_dir = Path(paths["processed"]["splits_dir"]) / pair_config["sap_target_task"]
         for protocol in ("paper_faithful", "speaker_disjoint"):
             build_pair_manifests(

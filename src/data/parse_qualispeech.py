@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from tqdm.auto import tqdm
 
 from src.utils.audio import probe_audio
 from src.utils.io import write_csv, write_json, write_parquet
@@ -35,7 +36,11 @@ def parse_qualispeech_split(root_dir: str | Path, split_name: str) -> tuple[pd.D
         raise ValueError(f"QualiSpeech CSV missing 'id' column: {csv_path}")
     rows: list[dict[str, Any]] = []
     missing_audio_paths: list[str] = []
-    for record in frame.to_dict(orient="records"):
+    for record in tqdm(
+        frame.to_dict(orient="records"),
+        desc=f"QualiSpeech {split_name}",
+        unit="utt",
+    ):
         filename = record["id"]
         audio_path = audio_dir / filename
         if not audio_path.exists():
@@ -71,7 +76,11 @@ def parse_qualispeech_dataset(root_dir: str | Path, output_dir: str | Path) -> d
     output_path.mkdir(parents=True, exist_ok=True)
     split_reports: list[dict[str, Any]] = []
     stats_rows: list[dict[str, Any]] = []
-    for split_name in REQUIRED_SPLITS:
+    for split_name in tqdm(
+        REQUIRED_SPLITS,
+        desc="QualiSpeech splits",
+        unit="split",
+    ):
         parsed, report = parse_qualispeech_split(root_dir, split_name)
         split_reports.append(report)
         write_parquet(output_path / f"qs_{split_name}.parquet", parsed)
@@ -109,4 +118,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
