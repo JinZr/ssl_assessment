@@ -75,6 +75,52 @@ def test_build_sap_task_split_respects_requested_sizes_and_writes_indices(tmp_pa
     assert (task_dir / "split_index.csv").exists()
 
 
+def test_build_sap_task_split_falls_back_when_paper_request_exceeds_available(tmp_path) -> None:
+    processed_dir = tmp_path / "processed" / "sap"
+    processed_dir.mkdir(parents=True)
+    utterances = []
+    labels = []
+    for index in range(30):
+        split = "train" if index < 24 else "dev"
+        speaker_id = f"spk{index // 3}"
+        utt_id = f"utt{index}"
+        utterances.append(
+            {
+                "utt_id": utt_id,
+                "speaker_id": speaker_id,
+                "split_original": split,
+                "audio_path": f"{utt_id}.wav",
+            }
+        )
+        labels.append(
+            {
+                "utt_id": utt_id,
+                "speaker_id": speaker_id,
+                "split_original": split,
+                "intelligibility": float((index % 4) + 1),
+            }
+        )
+    write_parquet(processed_dir / "sap_utterances.parquet", pd.DataFrame(utterances))
+    write_parquet(processed_dir / "sap_labels_wide.parquet", pd.DataFrame(labels))
+
+    metadata = build_sap_task_split(
+        processed_sap_dir=processed_dir,
+        output_dir=tmp_path / "splits",
+        task_name="sap_intelligibility",
+        target_dim="intelligibility",
+        seed=13,
+        protocol="paper_faithful",
+        paper_train_size=5046,
+        paper_val_size=500,
+    )
+
+    assert metadata["paper_size_mode"] == "fallback_to_available"
+    assert metadata["paper_total_requested"] == 5546
+    assert metadata["paper_total_used"] == 24
+    assert metadata["sap_train_n"] + metadata["sap_val_n"] == 24
+    assert metadata["sap_val_n"] == metadata["paper_val_size_used"]
+
+
 def test_run_suite_builds_reviewer_variants_without_alias_methods(monkeypatch, tmp_path) -> None:
     collected: list[dict] = []
 
@@ -125,4 +171,3 @@ def test_run_suite_builds_reviewer_variants_without_alias_methods(monkeypatch, t
     assert any(cfg["experiment"].get("reviewer_control") == "speaker_disjoint_val" for cfg in collected)
     assert any(cfg["experiment"].get("reviewer_control") == "negative_pairs" for cfg in collected)
     assert any(cfg.get("training", {}).get("loss") == "huber" for cfg in collected)
-

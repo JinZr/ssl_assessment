@@ -54,16 +54,45 @@ def _subsample_paper_train_candidates(
     label_column: str,
     paper_train_size: int | None,
     paper_val_size: int,
+    requested_paper_val_size: int | None,
     seed: int,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, dict[str, Any]]:
     if paper_train_size is None:
-        return frame
-    requested_total = paper_train_size + paper_val_size
+        return frame, {
+            "paper_size_mode": "full_available",
+            "paper_total_requested": None,
+            "paper_total_used": int(len(frame)),
+            "paper_train_size_requested": None,
+            "paper_train_size_used": int(len(frame) - paper_val_size) if len(frame) > paper_val_size else max(0, len(frame) - 1),
+            "paper_val_size_requested": requested_paper_val_size,
+            "paper_val_size_used": min(paper_val_size, max(1, len(frame) - 1)) if len(frame) > 1 else 0,
+        }
+    requested_total = paper_train_size + (requested_paper_val_size if requested_paper_val_size is not None else paper_val_size)
+    if len(frame) <= 1:
+        raise ValueError(f"Not enough labeled rows to build train/val split for {label_column}: {len(frame)}")
     if requested_total > len(frame):
-        raise ValueError(
-            f"Requested paper-faithful train+val size {requested_total} exceeds available rows {len(frame)}."
-        )
-    return sample_stratified_exact(frame, label_column, requested_total, seed, replace=False)
+        effective_total = len(frame)
+        effective_val = min(paper_val_size, len(frame) - 1)
+        effective_train = effective_total - effective_val
+        return frame.copy(), {
+            "paper_size_mode": "fallback_to_available",
+            "paper_total_requested": requested_total,
+            "paper_total_used": effective_total,
+            "paper_train_size_requested": paper_train_size,
+            "paper_train_size_used": effective_train,
+            "paper_val_size_requested": requested_paper_val_size if requested_paper_val_size is not None else paper_val_size,
+            "paper_val_size_used": effective_val,
+        }
+    sampled = sample_stratified_exact(frame, label_column, requested_total, seed, replace=False)
+    return sampled, {
+        "paper_size_mode": "paper_requested",
+        "paper_total_requested": requested_total,
+        "paper_total_used": requested_total,
+        "paper_train_size_requested": paper_train_size,
+        "paper_train_size_used": paper_train_size,
+        "paper_val_size_requested": requested_paper_val_size if requested_paper_val_size is not None else paper_val_size,
+        "paper_val_size_used": paper_val_size,
+    }
 
 
 def build_sap_task_split(
@@ -88,13 +117,16 @@ def build_sap_task_split(
     train_candidates = eligible[eligible["split_original"] == "train"].copy()
     test_frame = eligible[eligible["split_original"] == "dev"].copy()
     val_size = _resolve_val_size(task_name, len(train_candidates), paper_val_size=paper_val_size)
-    train_candidates = _subsample_paper_train_candidates(
+    train_candidates, paper_size_info = _subsample_paper_train_candidates(
         train_candidates,
         target_dim,
         paper_train_size=paper_train_size,
         paper_val_size=val_size,
+        requested_paper_val_size=paper_val_size,
         seed=seed,
     )
+    if paper_size_info["paper_val_size_used"] not in (None, val_size):
+        val_size = int(paper_size_info["paper_val_size_used"])
     if protocol == "speaker_disjoint":
         train_frame, val_frame = _speaker_disjoint_split(train_candidates, target_dim, val_size, seed)
     else:
@@ -127,6 +159,7 @@ def build_sap_task_split(
         "sap_test_n": int(len(test_frame)),
         "val_size_requested": int(val_size),
         "paper_train_size_requested": paper_train_size,
+        **paper_size_info,
         "train_label_histogram": train_frame[target_dim].value_counts(dropna=False).sort_index().to_dict(),
         "val_label_histogram": val_frame[target_dim].value_counts(dropna=False).sort_index().to_dict(),
         "test_label_histogram": test_frame[target_dim].value_counts(dropna=False).sort_index().to_dict(),
