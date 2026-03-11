@@ -10,7 +10,7 @@ import pandas as pd
 from tqdm.auto import tqdm
 
 from src.data.sap_dimension_map import canonicalize_dimension, normalize_dimension_name
-from src.utils.audio import probe_audio
+from src.utils.audio import probe_audio_many
 from src.utils.io import read_json, write_csv, write_json, write_parquet, write_text
 
 
@@ -79,7 +79,12 @@ def _parse_rating_level(raw_level: Any) -> float | None:
     return value
 
 
-def parse_sap_split(split_dir: str | Path) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+def parse_sap_split(
+    split_dir: str | Path,
+    *,
+    audio_cache_path: str | Path | None = None,
+    audio_probe_workers: int | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     split_path = Path(split_dir)
     utterance_rows: list[dict[str, Any]] = []
     label_rows: list[dict[str, Any]] = []
@@ -89,6 +94,7 @@ def parse_sap_split(split_dir: str | Path) -> tuple[pd.DataFrame, pd.DataFrame, 
     discarded_rating_count = 0
     discarded_examples: list[dict[str, Any]] = []
     json_paths, duplicates = _resolve_speaker_jsons(split_path)
+    audio_paths_to_probe: list[str] = []
 
     for speaker_json_path in tqdm(
         json_paths,
@@ -105,9 +111,11 @@ def parse_sap_split(split_dir: str | Path) -> tuple[pd.DataFrame, pd.DataFrame, 
             if not filename:
                 continue
             audio_path = _resolve_audio_path(split_path, speaker_json_path, filename)
+            audio_path_str = str(audio_path)
             if not audio_path.exists():
-                missing_audio_paths.append(str(audio_path))
-            audio_stats = probe_audio(audio_path)
+                missing_audio_paths.append(audio_path_str)
+            else:
+                audio_paths_to_probe.append(audio_path_str)
             utt_id = Path(filename).stem
             prompt_fields = _extract_prompt_fields(file_entry)
             ratings = file_entry.get("Ratings") or []
@@ -120,7 +128,7 @@ def parse_sap_split(split_dir: str | Path) -> tuple[pd.DataFrame, pd.DataFrame, 
                     "speaker_json_path": str(speaker_json_path),
                     "utt_id": utt_id,
                     "audio_filename": filename,
-                    "audio_path": str(audio_path),
+                    "audio_path": audio_path_str,
                     "etiology": etiology,
                     "block_number": block_number,
                     "created": file_entry.get("Created"),
@@ -132,9 +140,9 @@ def parse_sap_split(split_dir: str | Path) -> tuple[pd.DataFrame, pd.DataFrame, 
                     "prompt_subcategory": prompt_fields["prompt_subcategory"],
                     "num_ratings": len(ratings),
                     "has_any_rating": bool(ratings),
-                    "duration_sec": audio_stats["duration_sec"],
-                    "sample_rate": audio_stats["sample_rate"],
-                    "num_samples": audio_stats["num_samples"],
+                    "duration_sec": None,
+                    "sample_rate": None,
+                    "num_samples": None,
                 }
             )
             for rating in ratings:
@@ -166,6 +174,17 @@ def parse_sap_split(split_dir: str | Path) -> tuple[pd.DataFrame, pd.DataFrame, 
                         "label_max": 7.0,
                     }
                 )
+    audio_stats_map = probe_audio_many(
+        audio_paths_to_probe,
+        cache_path=audio_cache_path,
+        max_workers=audio_probe_workers,
+        desc=f"SAP {split_path.name} audio",
+    )
+    for row in utterance_rows:
+        audio_stats = audio_stats_map.get(row["audio_path"], {"duration_sec": None, "sample_rate": None, "num_samples": None})
+        row["duration_sec"] = audio_stats["duration_sec"]
+        row["sample_rate"] = audio_stats["sample_rate"]
+        row["num_samples"] = audio_stats["num_samples"]
     report = {
         "split": split_path.name,
         "num_speaker_jsons": len(json_paths),
@@ -185,6 +204,9 @@ def parse_sap_dataset(
     train_dir: str | Path,
     dev_dir: str | Path,
     output_dir: str | Path,
+    *,
+    audio_cache_path: str | Path | None = None,
+    audio_probe_workers: int | None = None,
 ) -> dict[str, Any]:
     output_path = Path(output_dir)
     all_utterances: list[pd.DataFrame] = []
@@ -195,7 +217,11 @@ def parse_sap_dataset(
         desc="SAP splits",
         unit="split",
     ):
-        utterances, labels, report = parse_sap_split(split_dir)
+        utterances, labels, report = parse_sap_split(
+            split_dir,
+            audio_cache_path=audio_cache_path,
+            audio_probe_workers=audio_probe_workers,
+        )
         all_utterances.append(utterances)
         all_labels.append(labels)
         split_reports.append(report)

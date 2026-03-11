@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import os
 from pathlib import Path
 from typing import Any
 
@@ -42,11 +43,28 @@ def _results_root(paths: dict[str, Any]) -> Path:
     return runs_dir.parent
 
 
+def _default_audio_probe_cache_path(paths: dict[str, Any]) -> Path:
+    return Path(paths["processed"]["sap_dir"]).parents[1] / "cache" / "audio_probe_cache.json"
+
+
 def prepare_all(paths_config: dict[str, Any], task_configs: dict[str, dict[str, Any]], pair_configs: dict[str, dict[str, Any]]) -> None:
     paths = paths_config["paths"]
     default_seed = int(paths_config.get("defaults", {}).get("seed", 13))
-    parse_sap_dataset(paths["sap"]["train_dir"], paths["sap"]["dev_dir"], paths["processed"]["sap_dir"])
-    parse_qualispeech_dataset(paths["qualispeech"]["root_dir"], paths["processed"]["qs_dir"])
+    audio_cache_path = Path(os.environ.get("SSL_ASSESSMENT_AUDIO_PROBE_CACHE", _default_audio_probe_cache_path(paths)))
+    audio_probe_workers = int(os.environ.get("SSL_ASSESSMENT_AUDIO_PROBE_WORKERS", "0")) or None
+    parse_sap_dataset(
+        paths["sap"]["train_dir"],
+        paths["sap"]["dev_dir"],
+        paths["processed"]["sap_dir"],
+        audio_cache_path=audio_cache_path,
+        audio_probe_workers=audio_probe_workers,
+    )
+    parse_qualispeech_dataset(
+        paths["qualispeech"]["root_dir"],
+        paths["processed"]["qs_dir"],
+        audio_cache_path=audio_cache_path,
+        audio_probe_workers=audio_probe_workers,
+    )
 
     for task_config in tqdm(
         task_configs.values(),

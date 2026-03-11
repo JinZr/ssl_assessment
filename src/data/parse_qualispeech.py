@@ -8,7 +8,7 @@ from typing import Any
 import pandas as pd
 from tqdm.auto import tqdm
 
-from src.utils.audio import probe_audio
+from src.utils.audio import probe_audio_many
 from src.utils.io import write_csv, write_json, write_parquet
 
 
@@ -27,7 +27,13 @@ def canonicalize_qs_columns(frame: pd.DataFrame) -> pd.DataFrame:
     return frame.rename(columns=rename_map)
 
 
-def parse_qualispeech_split(root_dir: str | Path, split_name: str) -> tuple[pd.DataFrame, dict[str, Any]]:
+def parse_qualispeech_split(
+    root_dir: str | Path,
+    split_name: str,
+    *,
+    audio_cache_path: str | Path | None = None,
+    audio_probe_workers: int | None = None,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
     root_path = Path(root_dir)
     csv_path = root_path / f"{split_name}.csv"
     audio_dir = root_path / split_name
@@ -36,6 +42,7 @@ def parse_qualispeech_split(root_dir: str | Path, split_name: str) -> tuple[pd.D
         raise ValueError(f"QualiSpeech CSV missing 'id' column: {csv_path}")
     rows: list[dict[str, Any]] = []
     missing_audio_paths: list[str] = []
+    audio_paths_to_probe: list[str] = []
     for record in tqdm(
         frame.to_dict(orient="records"),
         desc=f"QualiSpeech {split_name}",
@@ -43,24 +50,37 @@ def parse_qualispeech_split(root_dir: str | Path, split_name: str) -> tuple[pd.D
     ):
         filename = record["id"]
         audio_path = audio_dir / filename
+        audio_path_str = str(audio_path)
         if not audio_path.exists():
-            missing_audio_paths.append(str(audio_path))
-        audio_stats = probe_audio(audio_path)
+            missing_audio_paths.append(audio_path_str)
+        else:
+            audio_paths_to_probe.append(audio_path_str)
         row = {
             "dataset": "qualispeech",
             "split_original": split_name,
             "utt_id": Path(filename).stem,
             "audio_filename": filename,
-            "audio_path": str(audio_path),
-            "duration_sec": audio_stats["duration_sec"],
-            "sample_rate": audio_stats["sample_rate"],
-            "num_samples": audio_stats["num_samples"],
+            "audio_path": audio_path_str,
+            "duration_sec": None,
+            "sample_rate": None,
+            "num_samples": None,
         }
         for key, value in record.items():
             if key == "id":
                 continue
             row[key] = value
         rows.append(row)
+    audio_stats_map = probe_audio_many(
+        audio_paths_to_probe,
+        cache_path=audio_cache_path,
+        max_workers=audio_probe_workers,
+        desc=f"QualiSpeech {split_name} audio",
+    )
+    for row in rows:
+        audio_stats = audio_stats_map.get(row["audio_path"], {"duration_sec": None, "sample_rate": None, "num_samples": None})
+        row["duration_sec"] = audio_stats["duration_sec"]
+        row["sample_rate"] = audio_stats["sample_rate"]
+        row["num_samples"] = audio_stats["num_samples"]
     parsed = pd.DataFrame(rows)
     report = {
         "split": split_name,
@@ -71,7 +91,13 @@ def parse_qualispeech_split(root_dir: str | Path, split_name: str) -> tuple[pd.D
     return parsed, report
 
 
-def parse_qualispeech_dataset(root_dir: str | Path, output_dir: str | Path) -> dict[str, Any]:
+def parse_qualispeech_dataset(
+    root_dir: str | Path,
+    output_dir: str | Path,
+    *,
+    audio_cache_path: str | Path | None = None,
+    audio_probe_workers: int | None = None,
+) -> dict[str, Any]:
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     split_reports: list[dict[str, Any]] = []
@@ -81,7 +107,12 @@ def parse_qualispeech_dataset(root_dir: str | Path, output_dir: str | Path) -> d
         desc="QualiSpeech splits",
         unit="split",
     ):
-        parsed, report = parse_qualispeech_split(root_dir, split_name)
+        parsed, report = parse_qualispeech_split(
+            root_dir,
+            split_name,
+            audio_cache_path=audio_cache_path,
+            audio_probe_workers=audio_probe_workers,
+        )
         split_reports.append(report)
         write_parquet(output_path / f"qs_{split_name}.parquet", parsed)
         score_columns = [
