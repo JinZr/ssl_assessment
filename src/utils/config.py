@@ -52,9 +52,11 @@ def load_config_bundle(
     paths_path: str | Path,
     extra_paths: list[str | Path] | None = None,
 ) -> dict[str, Any]:
+    defaults_path = Path(defaults_path).resolve()
+    paths_path = Path(paths_path).resolve()
     pieces = [defaults_path, paths_path]
     if extra_paths:
-        pieces.extend(extra_paths)
+        pieces.extend(Path(path).resolve() for path in extra_paths)
     merged = merge_yaml_files(pieces)
-    return resolve_relative_paths(merged, Path(defaults_path).parent)
-
+    repo_root = defaults_path.parent.parent
+    return resolve_relative_paths(merged, repo_root)
