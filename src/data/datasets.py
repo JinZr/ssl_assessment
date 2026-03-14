@@ -29,10 +29,10 @@ class SpeechCollator:
     multitask_task_ids: list[str] | None = None
 
     def __call__(self, batch: list[dict[str, Any]]) -> dict[str, Any]:
-        waveforms: list[torch.Tensor] = []
+        waveforms: list[list[float]] = []
         for item in batch:
             waveform, _ = load_audio(item["audio_path"], target_sample_rate=self.sampling_rate)
-            waveforms.append(waveform)
+            waveforms.append(waveform.detach().cpu().to(torch.float32).tolist())
         features = self.processor(
             waveforms,
             sampling_rate=self.sampling_rate,

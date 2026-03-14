@@ -12,6 +12,7 @@ from tests.conftest import write_wave
 
 class DummyProcessor:
     def __call__(self, waveforms, sampling_rate: int, padding: bool, return_tensors: str):
+        waveforms = [torch.as_tensor(waveform, dtype=torch.float32) for waveform in waveforms]
         max_len = max(waveform.shape[0] for waveform in waveforms)
         batch = torch.zeros(len(waveforms), max_len)
         mask = torch.zeros(len(waveforms), max_len, dtype=torch.long)
@@ -73,4 +74,3 @@ def test_baseline_trainer_smoke(tmp_path, monkeypatch) -> None:
     trainer.cleanup()
     assert (tmp_path / "run" / "test_metrics.json").exists()
     assert (tmp_path / "run" / "best.ckpt").exists()
-

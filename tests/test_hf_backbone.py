@@ -35,6 +35,7 @@ class FakeModel(torch.nn.Module):
 
 class FakeProcessor:
     def __call__(self, waveforms, sampling_rate: int, padding: bool, return_tensors: str):
+        waveforms = [torch.as_tensor(waveform, dtype=torch.float32) for waveform in waveforms]
         max_len = max(waveform.shape[0] for waveform in waveforms)
         batch = torch.zeros(len(waveforms), max_len)
         mask = torch.zeros(len(waveforms), max_len, dtype=torch.long)
@@ -57,4 +58,3 @@ def test_hf_ssl_backbone_uses_masked_mean_pool(monkeypatch) -> None:
     outputs = backbone(inputs, attention_mask=mask)
     assert outputs.last_hidden_state.shape == (1, 2, 4)
     assert torch.allclose(outputs.pooled_embedding, torch.tensor([[2.0, 2.0, 2.0, 2.0]]))
-
