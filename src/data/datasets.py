@@ -39,7 +39,10 @@ class SpeechCollator:
             padding=True,
             return_tensors="pt",
         )
-        labels = torch.tensor([float(item["label_for_loss"]) for item in batch], dtype=torch.float32)
+        labels = torch.tensor(
+            [float(item["label_for_loss"] if "label_for_loss" in item else item["label"]) for item in batch],
+            dtype=torch.float32,
+        )
         batch_dict = {
             "input_values": features["input_values"],
             "attention_mask": features.get("attention_mask"),

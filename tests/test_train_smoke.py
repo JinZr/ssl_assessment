@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pandas as pd
 import torch
 
+from src.data.datasets import SpeechCollator
 from src.models.hf_ssl_backbone import BackboneOutput
 from src.trainers.baseline_trainer import BaselineTrainer
 from tests.conftest import write_wave
@@ -74,3 +75,16 @@ def test_baseline_trainer_smoke(tmp_path, monkeypatch) -> None:
     trainer.cleanup()
     assert (tmp_path / "run" / "test_metrics.json").exists()
     assert (tmp_path / "run" / "best.ckpt").exists()
+
+
+def test_speech_collator_falls_back_to_label_when_label_for_loss_missing(tmp_path) -> None:
+    audio_path = write_wave(tmp_path / "audio" / "utt.wav")
+    collator = SpeechCollator(processor=DummyProcessor(), sampling_rate=16_000)
+    batch = [
+        {
+            "audio_path": str(audio_path),
+            "label": 3.0,
+        }
+    ]
+    output = collator(batch)
+    assert torch.equal(output["labels"], torch.tensor([3.0], dtype=torch.float32))
