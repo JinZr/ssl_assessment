@@ -274,9 +274,11 @@ def run_experiment(config: dict[str, Any], _retry_count: int = 0) -> str:
         return run_id
     except RuntimeError as error:
         if "out of memory" in str(error).lower():
-            current_budget = config.get("training", {}).get("max_total_sec")
+            current_budget = config.get("experiment", {}).get("max_total_sec_override")
             if current_budget is None:
-                current_budget = config["model"].get("max_total_sec", 180)
+                current_budget = config["model"].get("max_total_sec")
+            if current_budget is None:
+                current_budget = config.get("training", {}).get("max_total_sec", 180)
             next_budget = max(10, int(current_budget // 2))
             if _retry_count >= 1 or next_budget == current_budget:
                 write_run_status(
@@ -290,6 +292,7 @@ def run_experiment(config: dict[str, Any], _retry_count: int = 0) -> str:
                 )
                 raise
             config.setdefault("experiment", {})["max_total_sec_override"] = next_budget
+            config["experiment"]["max_input_sec_override"] = next_budget
             dump_yaml(run_dir / "config_resolved.yaml", config)
             write_run_status(run_dir, "oom_retry", {"max_total_sec": next_budget, "retry_count": _retry_count + 1})
             if trainer is not None:

@@ -134,6 +134,18 @@ class BaseTrainer:
             return float(self.config["training"]["max_total_sec"])
         return 180.0
 
+    def _resolve_max_input_sec(self, stage_cfg: dict[str, Any]) -> float:
+        experiment_override = self.config.get("experiment", {}).get("max_input_sec_override")
+        if experiment_override is not None:
+            return float(experiment_override)
+        if stage_cfg is not self.config.get("training") and stage_cfg.get("max_input_sec") is not None:
+            return float(stage_cfg["max_input_sec"])
+        if self.config["model"].get("max_input_sec") is not None:
+            return float(self.config["model"]["max_input_sec"])
+        if self.config.get("training", {}).get("max_input_sec") is not None:
+            return float(self.config["training"]["max_input_sec"])
+        return self._resolve_max_total_sec(stage_cfg)
+
     def _loss_name(self, stage_cfg: dict[str, Any]) -> str:
         return stage_cfg.get("loss", self.config.get("training", {}).get("loss", "mse")).lower()
 
@@ -178,6 +190,7 @@ class BaseTrainer:
                 processor=processor,
                 sampling_rate=data_cfg.get("sample_rate", 16_000),
                 multitask_task_ids=multitask_task_ids,
+                max_input_sec=self._resolve_max_input_sec(stage_cfg),
             ),
         )
 
@@ -236,7 +249,22 @@ class BaseTrainer:
             )
         else:
             raise ValueError(f"Unsupported forward mode: {mode}")
-        return outputs["prediction"]
+        return self._aggregate_segment_predictions(outputs["prediction"], batch)
+
+    @staticmethod
+    def _aggregate_segment_predictions(predictions: torch.Tensor, batch: dict[str, Any]) -> torch.Tensor:
+        parent_indices = batch["segment_parent_indices"].to(predictions.device)
+        weights = batch["segment_weights"].to(predictions.device)
+        batch_size = len(batch["metadata"])
+        if predictions.ndim == 1:
+            aggregated = torch.zeros(batch_size, dtype=predictions.dtype, device=predictions.device)
+            aggregated.index_add_(0, parent_indices, predictions * weights)
+            return aggregated
+        if predictions.ndim == 2:
+            aggregated = torch.zeros(batch_size, predictions.shape[1], dtype=predictions.dtype, device=predictions.device)
+            aggregated.index_add_(0, parent_indices, predictions * weights.unsqueeze(-1))
+            return aggregated
+        raise ValueError(f"Unsupported prediction rank for aggregation: {predictions.ndim}")
 
     def _compute_batch_loss(
         self,
@@ -525,6 +553,7 @@ class BaseTrainer:
                     "effective_batch_size": self.world_size * self.config["training"].get("gradient_accumulation_steps", 1),
                     "accumulation_steps": self.config["training"].get("gradient_accumulation_steps", 1),
                     "max_total_sec": self._resolve_max_total_sec(self.config.get("training", {})),
+                    "max_input_sec": self._resolve_max_input_sec(self.config.get("training", {})),
                 },
             )
             if copy_stage_checkpoint_from:

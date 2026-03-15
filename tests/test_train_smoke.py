@@ -7,6 +7,7 @@ import torch
 
 from src.data.datasets import SpeechCollator
 from src.models.hf_ssl_backbone import BackboneOutput
+from src.samplers.dynamic_batch import DynamicDurationBatchSampler
 from src.trainers.baseline_trainer import BaselineTrainer
 from tests.conftest import write_wave
 
@@ -88,3 +89,30 @@ def test_speech_collator_falls_back_to_label_when_label_for_loss_missing(tmp_pat
     ]
     output = collator(batch)
     assert torch.equal(output["labels"], torch.tensor([3.0], dtype=torch.float32))
+
+
+def test_speech_collator_chunks_long_audio_by_max_input_sec(tmp_path) -> None:
+    audio_path = write_wave(tmp_path / "audio" / "long.wav", duration_sec=0.25)
+    collator = SpeechCollator(processor=DummyProcessor(), sampling_rate=16_000, max_input_sec=0.1)
+    batch = [
+        {
+            "audio_path": str(audio_path),
+            "label": 1.0,
+        }
+    ]
+    output = collator(batch)
+    assert output["input_values"].shape[0] == 3
+    assert output["segment_parent_indices"].tolist() == [0, 0, 0]
+    assert abs(float(output["segment_weights"].sum()) - 1.0) < 1e-6
+
+
+def test_dynamic_batch_sampler_buckets_by_duration() -> None:
+    sampler = DynamicDurationBatchSampler(
+        durations=[9.0, 8.5, 1.0, 1.0, 1.0, 1.0],
+        max_total_sec=10.0,
+        shuffle=False,
+        bucket_by_duration=True,
+    )
+    batches = list(iter(sampler))
+    assert batches[0] == [0]
+    assert batches[1] == [1, 2]
