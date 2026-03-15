@@ -6,6 +6,5 @@ model:
   layerdrop: 0.0
   head_hidden_dim: null
   dropout: 0.1
-  max_total_sec: 180
-  gradient_checkpointing: false
-
+  max_total_sec: 90
+  gradient_checkpointing: true
