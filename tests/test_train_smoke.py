@@ -8,6 +8,7 @@ import torch
 from src.data.datasets import SpeechCollator
 from src.models.hf_ssl_backbone import BackboneOutput
 from src.samplers.dynamic_batch import DynamicDurationBatchSampler
+from src.trainers.base import BaseTrainer
 from src.trainers.baseline_trainer import BaselineTrainer
 from tests.conftest import write_wave
 
@@ -116,3 +117,15 @@ def test_dynamic_batch_sampler_buckets_by_duration() -> None:
     batches = list(iter(sampler))
     assert batches[0] == [0]
     assert batches[1] == [1, 2]
+
+
+def test_segment_aggregation_handles_mixed_precision_weights() -> None:
+    predictions = torch.tensor([1.0, 2.0, 3.0], dtype=torch.bfloat16)
+    batch = {
+        "segment_parent_indices": torch.tensor([0, 0, 1], dtype=torch.long),
+        "segment_weights": torch.tensor([0.25, 0.75, 1.0], dtype=torch.float32),
+        "metadata": [{}, {}],
+    }
+    aggregated = BaseTrainer._aggregate_segment_predictions(predictions, batch)
+    assert aggregated.dtype == torch.bfloat16
+    assert torch.allclose(aggregated.float(), torch.tensor([1.75, 3.0], dtype=torch.float32))

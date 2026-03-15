@@ -254,7 +254,7 @@ class BaseTrainer:
     @staticmethod
     def _aggregate_segment_predictions(predictions: torch.Tensor, batch: dict[str, Any]) -> torch.Tensor:
         parent_indices = batch["segment_parent_indices"].to(predictions.device)
-        weights = batch["segment_weights"].to(predictions.device)
+        weights = batch["segment_weights"].to(device=predictions.device, dtype=predictions.dtype)
         batch_size = len(batch["metadata"])
         if predictions.ndim == 1:
             aggregated = torch.zeros(batch_size, dtype=predictions.dtype, device=predictions.device)
