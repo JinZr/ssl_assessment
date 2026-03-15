@@ -34,13 +34,16 @@ class SpeechRegressor(nn.Module):
 
     def forward(self, input_values: torch.Tensor, attention_mask: torch.Tensor | None = None) -> dict[str, torch.Tensor]:
         features = self.backbone(input_values=input_values, attention_mask=attention_mask)
-        prediction = self.head(features.pooled_embedding)
+        prediction = self.predict_from_pooled_embedding(features.pooled_embedding)
         return {
             "prediction": prediction,
             "pooled_embedding": features.pooled_embedding,
             "frame_mask": features.frame_mask,
             "last_hidden_state": features.last_hidden_state,
         }
+
+    def predict_from_pooled_embedding(self, pooled_embedding: torch.Tensor) -> torch.Tensor:
+        return self.head(pooled_embedding)
 
 
 class DualHeadSpeechRegressor(nn.Module):
@@ -58,22 +61,30 @@ class DualHeadSpeechRegressor(nn.Module):
         domains: list[str] | None = None,
     ) -> dict[str, torch.Tensor]:
         features = self.backbone(input_values=input_values, attention_mask=attention_mask)
-        sap_pred = self.sap_head(features.pooled_embedding)
-        qs_pred = self.qs_head(features.pooled_embedding)
-        if domains is None:
-            prediction = sap_pred
-        else:
-            prediction = torch.where(
-                torch.tensor([domain == "sap" for domain in domains], device=sap_pred.device),
-                sap_pred,
-                qs_pred,
-            )
+        sap_pred, qs_pred, prediction = self.predict_from_pooled_embedding(features.pooled_embedding, domains)
         return {
             "prediction": prediction,
             "sap_prediction": sap_pred,
             "qs_prediction": qs_pred,
             "pooled_embedding": features.pooled_embedding,
         }
+
+    def predict_from_pooled_embedding(
+        self,
+        pooled_embedding: torch.Tensor,
+        domains: list[str] | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        sap_pred = self.sap_head(pooled_embedding)
+        qs_pred = self.qs_head(pooled_embedding)
+        if domains is None:
+            prediction = sap_pred
+        else:
+            prediction = torch.where(
+                torch.tensor([domain == "sap" for domain in domains], device=sap_pred.device, dtype=torch.bool),
+                sap_pred,
+                qs_pred,
+            )
+        return sap_pred, qs_pred, prediction
 
 
 class MultiTaskSpeechRegressor(nn.Module):
@@ -106,12 +117,21 @@ class MultiTaskSpeechRegressor(nn.Module):
             raise ValueError("task_ids are required for multi-task forward passes")
         if list(task_ids) != self.ordered_task_ids:
             raise ValueError("task_ids must match the model's ordered_task_ids")
-        prediction_matrix = torch.stack(
-            [self.heads[task_id](features.pooled_embedding) for task_id in self.ordered_task_ids],
-            dim=1,
-        )
+        prediction_matrix = self.predict_from_pooled_embedding(features.pooled_embedding, task_ids)
         return {
             "prediction": prediction_matrix,
             "pooled_embedding": features.pooled_embedding,
             "task_ids": self.ordered_task_ids,
         }
+
+    def predict_from_pooled_embedding(
+        self,
+        pooled_embedding: torch.Tensor,
+        task_ids: list[str],
+    ) -> torch.Tensor:
+        if list(task_ids) != self.ordered_task_ids:
+            raise ValueError("task_ids must match the model's ordered_task_ids")
+        return torch.stack(
+            [self.heads[task_id](pooled_embedding) for task_id in self.ordered_task_ids],
+            dim=1,
+        )

@@ -194,6 +194,60 @@ class BaseTrainer:
             ),
         )
 
+    def _build_segment_microbatches(self, batch: dict[str, Any], max_forward_sec: float) -> list[list[int]]:
+        durations = [max(float(value), 1e-6) for value in batch["segment_durations_sec"].tolist()]
+        groups: list[list[int]] = []
+        current_group: list[int] = []
+        current_total = 0.0
+        for index, duration in enumerate(durations):
+            if current_group and current_total + duration > max_forward_sec:
+                groups.append(current_group)
+                current_group = []
+                current_total = 0.0
+            current_group.append(index)
+            current_total += duration
+        if current_group:
+            groups.append(current_group)
+        return groups
+
+    def _encode_pooled_embeddings(
+        self,
+        model: nn.Module,
+        batch: dict[str, Any],
+        stage_cfg: dict[str, Any],
+    ) -> torch.Tensor:
+        unwrapped = self._unwrap(model)
+        backbone = unwrapped.backbone
+        num_samples = len(batch["metadata"])
+        embedding_dim = backbone.hidden_size
+        aggregated: torch.Tensor | None = None
+        parent_indices = batch["segment_parent_indices"].to(self.device)
+        segment_weights = batch["segment_weights"].to(self.device)
+        max_forward_sec = self._resolve_max_input_sec(stage_cfg)
+        segment_waveforms = batch["segment_waveforms"]
+
+        for segment_indices in self._build_segment_microbatches(batch, max_forward_sec=max_forward_sec):
+            waveforms = [segment_waveforms[index] for index in segment_indices]
+            features = backbone.processor(
+                waveforms,
+                sampling_rate=self.config.get("data", {}).get("sample_rate", 16_000),
+                padding=True,
+                return_tensors="pt",
+            )
+            input_values = features["input_values"].to(self.device)
+            attention_mask = features.get("attention_mask")
+            if attention_mask is not None:
+                attention_mask = attention_mask.to(self.device)
+            pooled = backbone(input_values=input_values, attention_mask=attention_mask).pooled_embedding
+            if aggregated is None:
+                aggregated = torch.zeros(num_samples, embedding_dim, device=self.device, dtype=pooled.dtype)
+            segment_index_tensor = torch.tensor(segment_indices, device=self.device, dtype=torch.long)
+            weighted = pooled * segment_weights.index_select(0, segment_index_tensor).to(dtype=pooled.dtype).unsqueeze(-1)
+            aggregated.index_add_(0, parent_indices.index_select(0, segment_index_tensor), weighted)
+        if aggregated is None:
+            return torch.zeros(num_samples, embedding_dim, device=self.device, dtype=torch.float32)
+        return aggregated
+
     def _build_optimizer(self, model: nn.Module, stage_cfg: dict[str, Any]) -> torch.optim.Optimizer:
         trainable_params = [param for param in model.parameters() if param.requires_grad]
         return AdamW(
@@ -228,43 +282,25 @@ class BaseTrainer:
         model: nn.Module,
         batch: dict[str, Any],
         mode: str,
+        stage_cfg: dict[str, Any],
     ) -> torch.Tensor:
-        input_values = batch["input_values"].to(self.device)
-        attention_mask = batch["attention_mask"]
-        if attention_mask is not None:
-            attention_mask = attention_mask.to(self.device)
+        pooled_embeddings = self._encode_pooled_embeddings(model, batch, stage_cfg)
+        unwrapped = self._unwrap(model)
         if mode == "single":
-            outputs = model(input_values=input_values, attention_mask=attention_mask)
+            return unwrapped.predict_from_pooled_embedding(pooled_embeddings)
         elif mode == "dual":
-            outputs = model(
-                input_values=input_values,
-                attention_mask=attention_mask,
+            _, _, prediction = unwrapped.predict_from_pooled_embedding(
+                pooled_embeddings,
                 domains=batch.get("domains"),
             )
+            return prediction
         elif mode == "multitask":
-            outputs = model(
-                input_values=input_values,
-                attention_mask=attention_mask,
+            return unwrapped.predict_from_pooled_embedding(
+                pooled_embeddings,
                 task_ids=batch.get("multitask_task_ids"),
             )
         else:
             raise ValueError(f"Unsupported forward mode: {mode}")
-        return self._aggregate_segment_predictions(outputs["prediction"], batch)
-
-    @staticmethod
-    def _aggregate_segment_predictions(predictions: torch.Tensor, batch: dict[str, Any]) -> torch.Tensor:
-        parent_indices = batch["segment_parent_indices"].to(predictions.device)
-        weights = batch["segment_weights"].to(device=predictions.device, dtype=predictions.dtype)
-        batch_size = len(batch["metadata"])
-        if predictions.ndim == 1:
-            aggregated = torch.zeros(batch_size, dtype=predictions.dtype, device=predictions.device)
-            aggregated.index_add_(0, parent_indices, predictions * weights)
-            return aggregated
-        if predictions.ndim == 2:
-            aggregated = torch.zeros(batch_size, predictions.shape[1], dtype=predictions.dtype, device=predictions.device)
-            aggregated.index_add_(0, parent_indices, predictions * weights.unsqueeze(-1))
-            return aggregated
-        raise ValueError(f"Unsupported prediction rank for aggregation: {predictions.ndim}")
 
     def _compute_batch_loss(
         self,
@@ -377,7 +413,7 @@ class BaseTrainer:
         with torch.no_grad():
             for batch in loader:
                 with self._autocast():
-                    batch_preds = self._forward(model, batch, mode).detach().float().cpu()
+                    batch_preds = self._forward(model, batch, mode, self.config.get("training", {})).detach().float().cpu()
                 if mode == "multitask":
                     ordered_task_ids = list(getattr(self._unwrap(model), "ordered_task_ids"))
                     eval_task = batch["eval_task_ids"][0]
@@ -466,7 +502,7 @@ class BaseTrainer:
             accumulation_steps = stage_cfg.get("gradient_accumulation_steps", 1)
             for step, batch in enumerate(train_loader, start=1):
                 with self._autocast():
-                    preds = self._forward(model, batch, mode)
+                    preds = self._forward(model, batch, mode, stage_cfg)
                     loss = self._compute_batch_loss(preds, batch, mode, stage_cfg) / accumulation_steps
                 if scaler.is_enabled():
                     scaler.scale(loss).backward()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import runpy
 
 import pandas as pd
 import yaml
@@ -171,3 +172,40 @@ def test_run_suite_builds_reviewer_variants_without_alias_methods(monkeypatch, t
     assert any(cfg["experiment"].get("reviewer_control") == "speaker_disjoint_val" for cfg in collected)
     assert any(cfg["experiment"].get("reviewer_control") == "negative_pairs" for cfg in collected)
     assert any(cfg.get("training", {}).get("loss") == "huber" for cfg in collected)
+
+
+def test_run_suite_script_honors_suite_lifecycle_flags(monkeypatch, tmp_path) -> None:
+    repo_root = Path("/Users/zrjin/git/ssl_assessment")
+    suite_path = repo_root / "configs" / "suite" / "tmp_script_suite.yaml"
+    suite_path.write_text(
+        yaml.safe_dump(
+            {
+                "prepare": True,
+                "summarize": True,
+                "tables": False,
+                "figures": False,
+                "report": False,
+                "models": [],
+                "tasks": [],
+                "pairs": [],
+                "methods": [],
+                "reviewer_controls": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls: list[tuple[str, object]] = []
+
+    monkeypatch.setattr("src.cli.pipeline.prepare_all", lambda *args, **kwargs: calls.append(("prepare", None)))
+    monkeypatch.setattr("src.cli.pipeline.run_suite", lambda *args, **kwargs: calls.append(("suite", None)) or [])
+    monkeypatch.setattr("src.cli.pipeline.run_postprocessing", lambda *args, **kwargs: calls.append(("post", kwargs)) or {})
+    monkeypatch.setattr("sys.argv", ["run_suite.py", "--suite", "configs/suite/tmp_script_suite.yaml"])
+
+    try:
+        runpy.run_path(str(repo_root / "scripts" / "run_suite.py"), run_name="__main__")
+    finally:
+        suite_path.unlink(missing_ok=True)
+
+    assert [item[0] for item in calls] == ["prepare", "suite", "post"]
+    assert calls[-1][1]["run_summarize"] is True
+    assert calls[-1][1]["run_tables"] is False

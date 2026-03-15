@@ -6,6 +6,7 @@ import pandas as pd
 import torch
 
 from src.data.datasets import SpeechCollator
+from src.models.regression import DualHeadSpeechRegressor
 from src.models.hf_ssl_backbone import BackboneOutput
 from src.samplers.dynamic_batch import DynamicDurationBatchSampler
 from src.trainers.base import BaseTrainer
@@ -14,7 +15,11 @@ from tests.conftest import write_wave
 
 
 class DummyProcessor:
+    def __init__(self) -> None:
+        self.calls = 0
+
     def __call__(self, waveforms, sampling_rate: int, padding: bool, return_tensors: str):
+        self.calls += 1
         waveforms = [torch.as_tensor(waveform, dtype=torch.float32) for waveform in waveforms]
         max_len = max(waveform.shape[0] for waveform in waveforms)
         batch = torch.zeros(len(waveforms), max_len)
@@ -102,7 +107,7 @@ def test_speech_collator_chunks_long_audio_by_max_input_sec(tmp_path) -> None:
         }
     ]
     output = collator(batch)
-    assert output["input_values"].shape[0] == 3
+    assert len(output["segment_waveforms"]) == 3
     assert output["segment_parent_indices"].tolist() == [0, 0, 0]
     assert abs(float(output["segment_weights"].sum()) - 1.0) < 1e-6
 
@@ -119,13 +124,31 @@ def test_dynamic_batch_sampler_buckets_by_duration() -> None:
     assert batches[1] == [1, 2]
 
 
-def test_segment_aggregation_handles_mixed_precision_weights() -> None:
-    predictions = torch.tensor([1.0, 2.0, 3.0], dtype=torch.bfloat16)
-    batch = {
-        "segment_parent_indices": torch.tensor([0, 0, 1], dtype=torch.long),
-        "segment_weights": torch.tensor([0.25, 0.75, 1.0], dtype=torch.float32),
-        "metadata": [{}, {}],
-    }
-    aggregated = BaseTrainer._aggregate_segment_predictions(predictions, batch)
-    assert aggregated.dtype == torch.bfloat16
-    assert torch.allclose(aggregated.float(), torch.tensor([1.75, 3.0], dtype=torch.float32))
+def test_trainer_encodes_long_audio_in_multiple_microbatches(tmp_path) -> None:
+    audio_path = write_wave(tmp_path / "audio" / "long.wav", duration_sec=0.25)
+    backbone = DummyHFBackbone()
+    model = DualHeadSpeechRegressor(backbone=backbone)
+    collator = SpeechCollator(processor=backbone.processor, sampling_rate=16_000, max_input_sec=0.1)
+    batch = collator(
+        [
+            {
+                "audio_path": str(audio_path),
+                "label": 1.0,
+                "domain": "sap",
+            }
+        ]
+    )
+    trainer = BaseTrainer(
+        config={
+            "experiment": {"seed": 13},
+            "training": {"precision": "none", "max_input_sec": 0.1},
+            "model": {"name": "wavlm_base", "max_input_sec": 0.1},
+            "data": {"sample_rate": 16_000},
+        },
+        run_dir=tmp_path / "run",
+    )
+    with torch.no_grad():
+        prediction = trainer._forward(model, batch, mode="dual", stage_cfg={"max_input_sec": 0.1})
+    trainer.cleanup()
+    assert prediction.shape == (1,)
+    assert backbone.processor.calls == 3
