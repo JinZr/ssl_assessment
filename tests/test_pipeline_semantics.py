@@ -4,11 +4,13 @@ from copy import deepcopy
 import json
 from pathlib import Path
 import runpy
+import traceback
 
 import pandas as pd
 import yaml
 
 from src.cli.pipeline import run_suite
+from src.utils.cli import format_compact_exception
 from src.data.split_builder import build_sap_task_split
 from src.tasks.pair_builder import sample_auxiliary_frame
 from src.utils.io import read_json, read_parquet, write_parquet
@@ -323,3 +325,29 @@ def test_run_suite_applies_suite_level_config_overrides(monkeypatch, tmp_path) -
     assert len(collected) == 1
     assert collected[0]["model"]["max_total_sec"] == 45
     assert collected[0]["model"]["max_input_sec"] == 30
+
+
+def test_format_compact_exception_filters_site_packages_frames(monkeypatch, tmp_path) -> None:
+    error = RuntimeError("CUDA out of memory")
+    error.__traceback__ = None
+    frames = [
+        traceback.FrameSummary(
+            filename="/mnt/env/lib/python3.10/site-packages/torch/utils/checkpoint.py",
+            lineno=325,
+            name="backward",
+            line="torch.autograd.backward(outputs_with_grad, args_with_grad)",
+        ),
+        traceback.FrameSummary(
+            filename=str(tmp_path / "src" / "cli" / "pipeline.py"),
+            lineno=328,
+            name="run_experiment",
+            line="write_run_status(run_dir, 'oom_retry', {'max_total_sec': next_budget})",
+        ),
+    ]
+    monkeypatch.setattr("src.utils.cli.traceback.extract_tb", lambda tb: frames)
+
+    rendered = format_compact_exception(error, tmp_path)
+
+    assert "RuntimeError: CUDA out of memory" in rendered
+    assert "site-packages" not in rendered
+    assert "src/cli/pipeline.py:328 in run_experiment" in rendered
