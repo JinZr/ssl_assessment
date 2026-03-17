@@ -15,6 +15,7 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
 
 from src.data.datasets import ManifestDataset, SpeechCollator
 from src.eval.evaluate import build_prediction_frame, metric_payload
@@ -70,6 +71,12 @@ class BaseTrainer:
 
     def cleanup(self) -> None:
         cleanup_distributed()
+
+    def _show_progress(self) -> bool:
+        return is_main_process(self.rank)
+
+    def _stage_progress_desc(self, stage_name: str, epoch: int, total_epochs: int) -> str:
+        return f"{self.run_dir.name} | {stage_name} | epoch {epoch + 1}/{total_epochs}"
 
     def _unwrap(self, model: nn.Module) -> nn.Module:
         if isinstance(model, DistributedDataParallel):
@@ -505,7 +512,8 @@ class BaseTrainer:
         if resume and last_ckpt.exists():
             start_epoch, best_metrics = self._load_checkpoint(last_ckpt, model, optimizer, scheduler)
 
-        for epoch in range(start_epoch, stage_cfg.get("max_epochs", 30)):
+        max_epochs = int(stage_cfg.get("max_epochs", 30))
+        for epoch in range(start_epoch, max_epochs):
             if hasattr(train_loader.batch_sampler, "set_epoch"):
                 train_loader.batch_sampler.set_epoch(epoch)
             model.train()
@@ -513,7 +521,19 @@ class BaseTrainer:
             num_batches = 0
             optimizer.zero_grad(set_to_none=True)
             accumulation_steps = stage_cfg.get("gradient_accumulation_steps", 1)
-            for step, batch in enumerate(train_loader, start=1):
+            progress_bar = None
+            train_iterable = train_loader
+            if self._show_progress():
+                progress_bar = tqdm(
+                    train_loader,
+                    total=len(train_loader),
+                    desc=self._stage_progress_desc(stage_name, epoch, max_epochs),
+                    unit="batch",
+                    dynamic_ncols=True,
+                    leave=False,
+                )
+                train_iterable = progress_bar
+            for step, batch in enumerate(train_iterable, start=1):
                 with self._autocast():
                     preds = self._forward(model, batch, mode, stage_cfg)
                     loss = self._compute_batch_loss(preds, batch, mode, stage_cfg) / accumulation_steps
@@ -530,8 +550,13 @@ class BaseTrainer:
                     optimizer.zero_grad(set_to_none=True)
                     if scheduler is not None:
                         scheduler.step()
-                running_loss += float(loss.detach().cpu()) * accumulation_steps
+                loss_value = float(loss.detach().cpu()) * accumulation_steps
+                running_loss += loss_value
                 num_batches += 1
+                if progress_bar is not None:
+                    progress_bar.set_postfix(loss=f"{loss_value:.4f}")
+            if progress_bar is not None:
+                progress_bar.close()
 
             _, val_metrics = self.evaluate_frame(model, val_frame, mode, stage_cfg=stage_cfg)
             train_record = {

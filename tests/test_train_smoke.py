@@ -197,3 +197,65 @@ def test_eval_and_finalize_use_stage_cfg_budget(tmp_path) -> None:
     model_info = json.loads((tmp_path / "run" / "model_info.json").read_text(encoding="utf-8"))
     assert model_info["max_total_sec"] == 0.1
     assert model_info["max_input_sec"] == 0.1
+
+
+def test_training_progress_bar_includes_run_title(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("src.trainers.base.BaseTrainer.build_backbone", lambda self: DummyHFBackbone())
+    audio_dir = tmp_path / "audio"
+    rows = []
+    for index, label in enumerate([1.0, 2.0, 3.0, 4.0]):
+        path = write_wave(audio_dir / f"utt{index}.wav")
+        rows.append(
+            {
+                "utt_id": f"utt{index}",
+                "speaker_id": f"spk{index}",
+                "audio_path": str(path),
+                "label": label,
+                "label_for_loss": label,
+                "label_min": 1.0,
+                "label_max": 7.0,
+                "duration_sec": 0.25,
+                "target_dim": "naturalness",
+                "domain": "sap",
+            }
+        )
+
+    progress_calls: list[dict[str, object]] = []
+
+    class FakeProgress:
+        def __init__(self, iterable, **kwargs) -> None:  # noqa: ANN001
+            self.iterable = iterable
+            self.kwargs = kwargs
+            self.postfixes: list[dict[str, object]] = []
+            progress_calls.append({"kwargs": kwargs, "postfixes": self.postfixes, "closed": False})
+
+        def __iter__(self):
+            return iter(self.iterable)
+
+        def set_postfix(self, **kwargs) -> None:
+            self.postfixes.append(kwargs)
+
+        def close(self) -> None:
+            progress_calls[-1]["closed"] = True
+
+    monkeypatch.setattr("src.trainers.base.tqdm", lambda iterable, **kwargs: FakeProgress(iterable, **kwargs))
+
+    train_frame = pd.DataFrame(rows[:2])
+    val_frame = pd.DataFrame(rows[2:3])
+    test_frame = pd.DataFrame(rows[3:])
+    config = {
+        "experiment": {"seed": 13, "encoder": "wavlm_base", "method": "baseline", "sap_target": "naturalness"},
+        "training": {"max_epochs": 1, "patience": 1, "gradient_accumulation_steps": 1, "max_total_sec": 180, "precision": "none", "lr": 1e-3},
+        "model": {"name": "wavlm_base", "dropout": 0.1},
+        "data": {"num_workers": 0, "sample_rate": 16_000},
+        "evaluation": {"n_bootstrap": 10},
+    }
+    trainer = BaselineTrainer(config, tmp_path / "progress_run")
+    trainer.run(train_frame, val_frame, test_frame)
+    trainer.cleanup()
+
+    assert progress_calls
+    assert progress_calls[0]["kwargs"]["desc"] == "progress_run | train | epoch 1/1"
+    assert progress_calls[0]["kwargs"]["unit"] == "batch"
+    assert progress_calls[0]["closed"] is True
+    assert progress_calls[0]["postfixes"]
