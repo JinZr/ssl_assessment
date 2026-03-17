@@ -8,6 +8,8 @@ experiment:
   sap_target: null
   qs_aux: null
   stage: train
+  oom_max_retries: 3
+  oom_min_budget_sec: 10
 
 training:
   optimizer: adamw

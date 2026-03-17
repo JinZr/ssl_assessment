@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pandas as pd
@@ -152,3 +153,47 @@ def test_trainer_encodes_long_audio_in_multiple_microbatches(tmp_path) -> None:
     trainer.cleanup()
     assert prediction.shape == (1,)
     assert backbone.processor.calls == 3
+
+
+def test_eval_and_finalize_use_stage_cfg_budget(tmp_path) -> None:
+    audio_path = write_wave(tmp_path / "audio" / "long.wav", duration_sec=0.25)
+    backbone = DummyHFBackbone()
+    model = DualHeadSpeechRegressor(backbone=backbone)
+    frame = pd.DataFrame(
+        [
+            {
+                "utt_id": "utt0",
+                "speaker_id": "spk0",
+                "audio_path": str(audio_path),
+                "label": 1.0,
+                "label_min": 1.0,
+                "label_max": 7.0,
+                "duration_sec": 0.25,
+                "target_dim": "naturalness",
+                "domain": "sap",
+            }
+        ]
+    )
+    trainer = BaseTrainer(
+        config={
+            "experiment": {"seed": 13},
+            "training": {"precision": "none", "max_total_sec": 0.25, "max_input_sec": 0.25, "gradient_accumulation_steps": 1},
+            "model": {"name": "wavlm_base", "max_total_sec": 0.25, "max_input_sec": 0.25},
+            "data": {"sample_rate": 16_000, "num_workers": 0},
+            "evaluation": {"n_bootstrap": 4},
+        },
+        run_dir=tmp_path / "run",
+    )
+    stage_cfg = {"max_total_sec": 0.1, "max_input_sec": 0.1}
+
+    _, _ = trainer.evaluate_frame(model, frame, mode="dual", stage_cfg=stage_cfg)
+    assert backbone.processor.calls == 3
+
+    backbone.processor.calls = 0
+    trainer.finalize_run(model, test_frame=frame, mode="dual", run_metadata={"seed": 13}, stage_cfg=stage_cfg)
+    trainer.cleanup()
+
+    assert backbone.processor.calls == 3
+    model_info = json.loads((tmp_path / "run" / "model_info.json").read_text(encoding="utf-8"))
+    assert model_info["max_total_sec"] == 0.1
+    assert model_info["max_input_sec"] == 0.1

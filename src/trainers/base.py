@@ -399,21 +399,28 @@ class BaseTrainer:
             return
         raise ValueError(f"Unknown freeze schedule: {schedule}")
 
-    def _collect_predictions(self, model: nn.Module, frame: pd.DataFrame, mode: str) -> list[dict[str, Any]]:
+    def _collect_predictions(
+        self,
+        model: nn.Module,
+        frame: pd.DataFrame,
+        mode: str,
+        stage_cfg: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         model.eval()
+        eval_stage_cfg = stage_cfg or self.config.get("training", {})
         multitask_task_ids = getattr(self._unwrap(model), "ordered_task_ids", None) if mode == "multitask" else None
         loader = self._make_loader(
             frame,
             self._unwrap(model).backbone.processor,
             train=False,
-            stage_cfg=self.config.get("training", {}),
+            stage_cfg=eval_stage_cfg,
             multitask_task_ids=multitask_task_ids,
         )
         records: list[dict[str, Any]] = []
         with torch.no_grad():
             for batch in loader:
                 with self._autocast():
-                    batch_preds = self._forward(model, batch, mode, self.config.get("training", {})).detach().float().cpu()
+                    batch_preds = self._forward(model, batch, mode, eval_stage_cfg).detach().float().cpu()
                 if mode == "multitask":
                     ordered_task_ids = list(getattr(self._unwrap(model), "ordered_task_ids"))
                     eval_task = batch["eval_task_ids"][0]
@@ -440,9 +447,15 @@ class BaseTrainer:
                     )
         return records
 
-    def evaluate_frame(self, model: nn.Module, frame: pd.DataFrame, mode: str) -> tuple[pd.DataFrame, dict[str, Any]]:
+    def evaluate_frame(
+        self,
+        model: nn.Module,
+        frame: pd.DataFrame,
+        mode: str,
+        stage_cfg: dict[str, Any] | None = None,
+    ) -> tuple[pd.DataFrame, dict[str, Any]]:
         prediction_frame = build_prediction_frame(
-            self._collect_predictions(model, frame, mode),
+            self._collect_predictions(model, frame, mode, stage_cfg=stage_cfg),
             run_metadata={},
             clip_range=(
                 float(frame["label_min"].min()),
@@ -520,7 +533,7 @@ class BaseTrainer:
                 running_loss += float(loss.detach().cpu()) * accumulation_steps
                 num_batches += 1
 
-            _, val_metrics = self.evaluate_frame(model, val_frame, mode)
+            _, val_metrics = self.evaluate_frame(model, val_frame, mode, stage_cfg=stage_cfg)
             train_record = {
                 "stage": stage_name,
                 "epoch": epoch,
@@ -562,8 +575,10 @@ class BaseTrainer:
         mode: str,
         run_metadata: dict[str, Any],
         copy_stage_checkpoint_from: str | None = None,
+        stage_cfg: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        prediction_records = self._collect_predictions(model, test_frame, mode)
+        eval_stage_cfg = stage_cfg or self.config.get("training", {})
+        prediction_records = self._collect_predictions(model, test_frame, mode, stage_cfg=eval_stage_cfg)
         prediction_frame = build_prediction_frame(
             prediction_records,
             run_metadata=run_metadata,
@@ -588,8 +603,8 @@ class BaseTrainer:
                     "world_size": self.world_size,
                     "effective_batch_size": self.world_size * self.config["training"].get("gradient_accumulation_steps", 1),
                     "accumulation_steps": self.config["training"].get("gradient_accumulation_steps", 1),
-                    "max_total_sec": self._resolve_max_total_sec(self.config.get("training", {})),
-                    "max_input_sec": self._resolve_max_input_sec(self.config.get("training", {})),
+                    "max_total_sec": self._resolve_max_total_sec(eval_stage_cfg),
+                    "max_input_sec": self._resolve_max_input_sec(eval_stage_cfg),
                 },
             )
             if copy_stage_checkpoint_from:

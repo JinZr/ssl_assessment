@@ -27,13 +27,15 @@ class SAPMultiTaskTrainer(BaseTrainer):
         multitask_test: pd.DataFrame,
     ) -> dict[str, Any]:
         task_ids = list(self.config["experiment"]["multitask_tasks"])
+        stage_cfg = self.config["training"]
         model = self.build_multi_task_model(task_ids=task_ids)
-        stage = self.run_stage("train", model, multitask_train, multitask_val, mode="multitask")
+        stage = self.run_stage("train", model, multitask_train, multitask_val, mode="multitask", stage_cfg=stage_cfg)
         metrics = self.finalize_run(
             model,
             test_frame=multitask_test,
             mode="multitask",
             run_metadata=self.config["experiment"],
             copy_stage_checkpoint_from=stage.best_checkpoint,
+            stage_cfg=stage_cfg,
         )
         return {"stage": stage, "metrics": metrics}

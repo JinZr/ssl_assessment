@@ -22,6 +22,7 @@ class FTTrainer(BaseTrainer):
         sampled_aux, aux_meta = sample_auxiliary_frame(qs_train, "label_raw", effective_n, self.config["experiment"]["seed"])
         stage1_train = sampled_aux.assign(label_for_loss=sampled_aux["label_raw"], domain="qualispeech")
         stage1_val = qs_val.assign(label_for_loss=qs_val["label_raw"], domain="qualispeech")
+        stage1_cfg = self.config.get("ft", {}).get("stage1", self.config["training"])
         model = self.build_single_head_model()
         stage1 = self.run_stage(
             "stage1",
@@ -29,7 +30,7 @@ class FTTrainer(BaseTrainer):
             stage1_train,
             stage1_val,
             mode="single",
-            stage_cfg=self.config.get("ft", {}).get("stage1", self.config["training"]),
+            stage_cfg=stage1_cfg,
         )
 
         unwrapped = self._unwrap(model)
@@ -37,13 +38,14 @@ class FTTrainer(BaseTrainer):
         self._apply_freeze_schedule(unwrapped, self.config.get("ft", {}).get("freeze_schedule", "full_finetune"))
         stage2_train = sap_train.assign(label_for_loss=sap_train["label"], domain="sap")
         stage2_val = sap_val.assign(label_for_loss=sap_val["label"], domain="sap")
+        stage2_cfg = self.config.get("ft", {}).get("stage2", self.config["training"])
         stage2 = self.run_stage(
             "stage2",
             model,
             stage2_train,
             stage2_val,
             mode="single",
-            stage_cfg=self.config.get("ft", {}).get("stage2", self.config["training"]),
+            stage_cfg=stage2_cfg,
             resume=False,
         )
         metrics = self.finalize_run(
@@ -52,6 +54,6 @@ class FTTrainer(BaseTrainer):
             mode="single",
             run_metadata={**self.config["experiment"], **aux_meta},
             copy_stage_checkpoint_from=stage2.best_checkpoint,
+            stage_cfg=stage2_cfg,
         )
         return {"stage1": stage1, "stage2": stage2, "metrics": metrics, "auxiliary": aux_meta}
-

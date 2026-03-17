@@ -33,15 +33,16 @@ class JTTrainer(BaseTrainer):
             ],
             ignore_index=True,
         ).sample(frac=1.0, random_state=self.config["experiment"]["seed"])
+        stage_cfg = self.config["training"]
         model = self.build_dual_head_model() if dual_head else self.build_single_head_model()
         mode = "dual" if dual_head else "single"
-        stage = self.run_stage("train", model, combined, sap_val, mode=mode)
+        stage = self.run_stage("train", model, combined, sap_val, mode=mode, stage_cfg=stage_cfg)
         metrics = self.finalize_run(
             model,
             test_frame=sap_test,
             mode=mode,
             run_metadata={**self.config["experiment"], **aux_meta},
             copy_stage_checkpoint_from=stage.best_checkpoint,
+            stage_cfg=stage_cfg,
         )
         return {"stage": stage, "metrics": metrics, "auxiliary": aux_meta}
-
