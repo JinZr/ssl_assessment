@@ -1,8 +1,8 @@
 prepare: true
 config_overrides:
   model:
-    max_total_sec: 45
-    max_input_sec: 30
+    max_total_sec: 30
+    max_input_sec: 15
 models:
   - wavlm_base
 tasks:
