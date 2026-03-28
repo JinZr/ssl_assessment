@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from src.utils.config import load_config_bundle
+from src.utils.hf import resolved_revision_record
 
 
 def test_load_config_bundle_resolves_repo_relative_paths() -> None:
@@ -20,3 +21,14 @@ def test_load_config_bundle_resolves_repo_relative_paths() -> None:
     assert config["paths"]["processed"]["splits_dir"] == str((repo_root / "data" / "processed" / "splits").resolve())
     assert config["model"]["cache_dir"] == str((repo_root / "data" / "cache" / "huggingface").resolve())
 
+
+def test_resolved_revision_record_skips_hub_lookup_when_local_files_only() -> None:
+    record = resolved_revision_record(
+        "wavlm_base",
+        "microsoft/wavlm-base",
+        "main",
+        local_files_only=True,
+    )
+
+    assert record["requested_revision"] == "main"
+    assert record["resolved_revision"] == "main"

@@ -117,7 +117,12 @@ def _append_model_revision(metadata_dir: Path, config: dict[str, Any]) -> dict[s
     metadata_dir.mkdir(parents=True, exist_ok=True)
     model_cfg = config["model"]
     spec = get_model_spec(model_cfg["name"])
-    record = resolved_revision_record(model_cfg["name"], spec.model_id, model_cfg.get("revision"))
+    record = resolved_revision_record(
+        model_cfg["name"],
+        spec.model_id,
+        model_cfg.get("revision"),
+        local_files_only=model_cfg.get("local_files_only", False),
+    )
     target = metadata_dir / "resolved_model_revisions.yaml"
     existing = load_yaml(target) if target.exists() else {"models": []}
     models = [item for item in existing.get("models", []) if item.get("model_name") != record["model_name"]]

@@ -58,3 +58,32 @@ def test_hf_ssl_backbone_uses_masked_mean_pool(monkeypatch) -> None:
     outputs = backbone(inputs, attention_mask=mask)
     assert outputs.last_hidden_state.shape == (1, 2, 4)
     assert torch.allclose(outputs.pooled_embedding, torch.tensor([[2.0, 2.0, 2.0, 2.0]]))
+
+
+def test_hf_ssl_backbone_passes_local_files_only_to_loaders(monkeypatch) -> None:
+    from src.models import hf_ssl_backbone as module
+
+    seen: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        module.AutoConfig,
+        "from_pretrained",
+        lambda model_id, **kwargs: seen.append({"loader": "config", "model_id": model_id, **kwargs}) or FakeConfig(),
+    )
+    monkeypatch.setattr(
+        module.AutoModel,
+        "from_pretrained",
+        lambda model_id, **kwargs: seen.append({"loader": "model", "model_id": model_id, **kwargs}) or FakeModel(),
+    )
+    monkeypatch.setattr(
+        module.AutoProcessor,
+        "from_pretrained",
+        lambda model_id, **kwargs: seen.append({"loader": "processor", "model_id": model_id, **kwargs}) or FakeProcessor(),
+    )
+
+    HFSSLBackbone("wavlm_base", cache_dir="/tmp/hf-cache", local_files_only=True)
+
+    assert [item["loader"] for item in seen] == ["config", "model", "processor"]
+    assert all(item["model_id"] == "microsoft/wavlm-base" for item in seen)
+    assert all(item["cache_dir"] == "/tmp/hf-cache" for item in seen)
+    assert all(item["local_files_only"] is True for item in seen)

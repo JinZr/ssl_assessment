@@ -31,6 +31,7 @@ class HFSSLBackbone(nn.Module):
         model_name: str,
         cache_dir: str | None = None,
         revision: str | None = None,
+        local_files_only: bool = False,
         apply_spec_augment: bool = False,
         layerdrop: float = 0.0,
         output_hidden_states: bool = False,
@@ -41,10 +42,16 @@ class HFSSLBackbone(nn.Module):
         self.model_name = model_name
         self.model_id = self.spec.model_id
         self.revision = revision
+        self.local_files_only = local_files_only
         self.output_hidden_states = output_hidden_states
 
         config = retry(
-            lambda: AutoConfig.from_pretrained(self.model_id, cache_dir=cache_dir, revision=revision)
+            lambda: AutoConfig.from_pretrained(
+                self.model_id,
+                cache_dir=cache_dir,
+                revision=revision,
+                local_files_only=local_files_only,
+            )
         )
         if hasattr(config, "apply_spec_augment"):
             config.apply_spec_augment = apply_spec_augment
@@ -56,6 +63,7 @@ class HFSSLBackbone(nn.Module):
                 self.model_id,
                 cache_dir=cache_dir,
                 revision=revision,
+                local_files_only=local_files_only,
                 config=config,
             )
         )
@@ -67,7 +75,14 @@ class HFSSLBackbone(nn.Module):
 
     def _load_processor(self, cache_dir: str | None, revision: str | None) -> Any:
         try:
-            return retry(lambda: AutoProcessor.from_pretrained(self.model_id, cache_dir=cache_dir, revision=revision))
+            return retry(
+                lambda: AutoProcessor.from_pretrained(
+                    self.model_id,
+                    cache_dir=cache_dir,
+                    revision=revision,
+                    local_files_only=self.local_files_only,
+                )
+            )
         except Exception:
             try:
                 return retry(
@@ -75,6 +90,7 @@ class HFSSLBackbone(nn.Module):
                         self.model_id,
                         cache_dir=cache_dir,
                         revision=revision,
+                        local_files_only=self.local_files_only,
                     )
                 )
             except Exception:
@@ -83,6 +99,7 @@ class HFSSLBackbone(nn.Module):
                         self.model_id,
                         cache_dir=cache_dir,
                         revision=revision,
+                        local_files_only=self.local_files_only,
                     )
                 )
 

@@ -27,7 +27,9 @@ def retry(
     raise last_error
 
 
-def resolve_model_revision(model_id: str, revision: str | None) -> str | None:
+def resolve_model_revision(model_id: str, revision: str | None, local_files_only: bool = False) -> str | None:
+    if local_files_only:
+        return revision
     try:
         model_info = retry(lambda: HfApi().model_info(model_id, revision=revision))
     except Exception:
@@ -35,11 +37,15 @@ def resolve_model_revision(model_id: str, revision: str | None) -> str | None:
     return model_info.sha or revision
 
 
-def resolved_revision_record(model_name: str, model_id: str, revision: str | None) -> dict[str, Any]:
+def resolved_revision_record(
+    model_name: str,
+    model_id: str,
+    revision: str | None,
+    local_files_only: bool = False,
+) -> dict[str, Any]:
     return {
         "model_name": model_name,
         "model_id": model_id,
         "requested_revision": revision or "main",
-        "resolved_revision": resolve_model_revision(model_id, revision),
+        "resolved_revision": resolve_model_revision(model_id, revision, local_files_only=local_files_only),
     }
-

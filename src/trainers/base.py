@@ -89,6 +89,7 @@ class BaseTrainer:
             model_name=model_cfg["name"],
             cache_dir=model_cfg.get("cache_dir"),
             revision=model_cfg.get("revision"),
+            local_files_only=model_cfg.get("local_files_only", False),
             apply_spec_augment=model_cfg.get("apply_spec_augment", False),
             layerdrop=model_cfg.get("layerdrop", 0.0),
             output_hidden_states=model_cfg.get("output_hidden_states", False),

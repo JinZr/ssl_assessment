@@ -45,6 +45,7 @@ model:
   name: wavlm_base
   revision: main
   cache_dir: ./data/cache/huggingface
+  local_files_only: true
   apply_spec_augment: false
   layerdrop: 0.0
   head_hidden_dim: null
