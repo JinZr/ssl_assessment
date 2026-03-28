@@ -20,6 +20,7 @@ class FakeModel(torch.nn.Module):
     def __init__(self) -> None:
         super().__init__()
         self.config = FakeConfig()
+        self.last_attention_mask_dtype = None
 
     def gradient_checkpointing_enable(self) -> None:
         return None
@@ -29,6 +30,7 @@ class FakeModel(torch.nn.Module):
         return mask[:, :output_length].bool()
 
     def forward(self, input_values: torch.Tensor, attention_mask: torch.Tensor | None = None, output_hidden_states: bool = False):
+        self.last_attention_mask_dtype = attention_mask.dtype if attention_mask is not None else None
         hidden = input_values[:, ::2].unsqueeze(-1).repeat(1, 1, 4)
         return SimpleNamespace(last_hidden_state=hidden, hidden_states=None)
 
@@ -58,6 +60,7 @@ def test_hf_ssl_backbone_uses_masked_mean_pool(monkeypatch) -> None:
     outputs = backbone(inputs, attention_mask=mask)
     assert outputs.last_hidden_state.shape == (1, 2, 4)
     assert torch.allclose(outputs.pooled_embedding, torch.tensor([[2.0, 2.0, 2.0, 2.0]]))
+    assert backbone.model.last_attention_mask_dtype is torch.bool
 
 
 def test_hf_ssl_backbone_passes_local_files_only_to_loaders(monkeypatch) -> None:

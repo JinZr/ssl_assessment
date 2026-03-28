@@ -140,6 +140,8 @@ class HFSSLBackbone(nn.Module):
         input_values: torch.Tensor,
         attention_mask: torch.Tensor | None = None,
     ) -> BackboneOutput:
+        if attention_mask is not None and attention_mask.dtype is not torch.bool:
+            attention_mask = attention_mask.to(dtype=torch.bool)
         outputs = self.model(
             input_values=input_values,
             attention_mask=attention_mask,

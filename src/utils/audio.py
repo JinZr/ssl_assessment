@@ -23,9 +23,10 @@ DEFAULT_AUDIO_PROBE_WORKERS = max(1, min(8, os.cpu_count() or 1))
 
 
 def load_audio(path: str | Path, target_sample_rate: int = TARGET_SAMPLE_RATE) -> tuple[torch.Tensor, int]:
-    if torchaudio is not None:
+    target = Path(path)
+    if torchaudio is not None and target.suffix.lower() != ".wav":
         try:
-            waveform, sample_rate = torchaudio.load(str(path))
+            waveform, sample_rate = torchaudio.load(str(target))
             if waveform.ndim == 2 and waveform.shape[0] > 1:
                 waveform = waveform.mean(dim=0, keepdim=True)
             if sample_rate != target_sample_rate:
@@ -37,7 +38,7 @@ def load_audio(path: str | Path, target_sample_rate: int = TARGET_SAMPLE_RATE) -
         except Exception:
             pass
 
-    sample_rate, waveform_np = wavfile.read(str(path))
+    sample_rate, waveform_np = wavfile.read(str(target))
     original_dtype = waveform_np.dtype
     waveform_np = waveform_np.astype(np.float32)
     if waveform_np.ndim == 2:
@@ -54,7 +55,7 @@ def _probe_audio_uncached(path: str | Path) -> dict[str, float | int | None]:
     target = Path(path)
     if not target.exists():
         return {"duration_sec": None, "sample_rate": None, "num_samples": None}
-    if torchaudio is not None:
+    if torchaudio is not None and target.suffix.lower() != ".wav":
         try:
             if hasattr(torchaudio, "info"):
                 info = torchaudio.info(str(target))

@@ -41,3 +41,24 @@ def test_load_audio_falls_back_when_torchaudio_backend_is_unavailable(tmp_path, 
     assert waveform.dtype == torch.float32
     assert waveform.ndim == 1
     assert waveform.numel() == 4_000
+
+
+def test_load_audio_skips_torchaudio_for_wav_inputs(tmp_path, monkeypatch) -> None:
+    audio_path = write_wave(tmp_path / "sample.wav", sample_rate=8_000)
+    attempts = {"load": 0}
+
+    class FakeTorchaudio:
+        @staticmethod
+        def load(path):  # noqa: ANN001
+            attempts["load"] += 1
+            raise AssertionError("WAV inputs should not go through torchaudio.load")
+
+    monkeypatch.setattr(audio, "torchaudio", FakeTorchaudio())
+
+    waveform, sample_rate = audio.load_audio(audio_path, target_sample_rate=16_000)
+
+    assert attempts["load"] == 0
+    assert sample_rate == 16_000
+    assert waveform.dtype == torch.float32
+    assert waveform.ndim == 1
+    assert waveform.numel() == 4_000
