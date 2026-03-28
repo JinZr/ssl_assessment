@@ -250,7 +250,7 @@ def _current_oom_budget(config: dict[str, Any]) -> int:
     return int(current_budget)
 
 
-def _cleanup_after_oom(trainer: Any) -> None:
+def _cleanup_after_run(trainer: Any) -> None:
     if trainer is not None:
         trainer.cleanup()
     gc.collect()
@@ -331,7 +331,7 @@ def run_experiment(config: dict[str, Any], _retry_count: int = 0) -> str:
             config["experiment"]["max_input_sec_override"] = next_budget
             dump_yaml(run_dir / "config_resolved.yaml", config)
             write_run_status(run_dir, "oom_retry", {"max_total_sec": next_budget, "retry_count": retry_count + 1})
-            _cleanup_after_oom(trainer)
+            _cleanup_after_run(trainer)
             trainer = None
             retry_count += 1
             continue
@@ -340,7 +340,7 @@ def run_experiment(config: dict[str, Any], _retry_count: int = 0) -> str:
             raise
         finally:
             if trainer is not None:
-                trainer.cleanup()
+                _cleanup_after_run(trainer)
 
 
 def _method_config_name(method: str) -> str:

@@ -280,12 +280,73 @@ def test_run_experiment_retries_oom_without_recursive_reentry(monkeypatch, tmp_p
     assert run_id == "oom-run"
     assert attempts["run"] == 3
     assert attempts["cleanup"] == 3
-    assert attempts["gc"] == 2
-    assert attempts["empty_cache"] == 2
-    assert attempts["ipc_collect"] == 2
+    assert attempts["gc"] == 3
+    assert attempts["empty_cache"] == 3
+    assert attempts["ipc_collect"] == 3
     assert [status for status, _ in statuses] == ["running", "oom_retry", "running", "oom_retry", "running", "complete"]
     assert dumped_configs[-1]["experiment"]["max_total_sec_override"] == 45
     assert dumped_configs[-1]["experiment"]["max_input_sec_override"] == 45
+
+
+def test_run_experiment_cleans_up_cuda_cache_after_success(monkeypatch, tmp_path) -> None:
+    from src.cli.pipeline import run_experiment
+
+    attempts = {"run": 0, "cleanup": 0, "empty_cache": 0, "ipc_collect": 0, "gc": 0}
+    frame = pd.DataFrame({"utt_id": ["utt0"], "label": [1.0]})
+
+    class FakeTrainer:
+        def __init__(self, config, run_dir) -> None:  # noqa: ANN001
+            self.config = config
+            self.run_dir = run_dir
+
+        def run(self, train_frame, val_frame, test_frame) -> None:  # noqa: ANN001
+            attempts["run"] += 1
+
+        def cleanup(self) -> None:
+            attempts["cleanup"] += 1
+
+    monkeypatch.setattr("src.cli.pipeline.seed_everything", lambda seed: None)
+    monkeypatch.setattr("src.cli.pipeline.build_run_id", lambda experiment: "success-run")
+    monkeypatch.setattr("src.cli.pipeline.run_complete", lambda run_dir: False)
+    monkeypatch.setattr("src.cli.pipeline._resolve_and_lock_model_revision", lambda config: config)
+    monkeypatch.setattr("src.cli.pipeline._load_task_frames", lambda config: (frame, frame, frame))
+    monkeypatch.setattr("src.cli.pipeline.BaselineTrainer", FakeTrainer)
+    monkeypatch.setattr("src.cli.pipeline.dump_yaml", lambda path, payload: None)
+    monkeypatch.setattr("src.cli.pipeline.write_run_status", lambda run_dir, status, extra=None: None)
+    monkeypatch.setattr("src.cli.pipeline.gc.collect", lambda: attempts.__setitem__("gc", attempts["gc"] + 1) or 0)
+    monkeypatch.setattr("src.cli.pipeline.torch.cuda.is_available", lambda: True)
+    monkeypatch.setattr(
+        "src.cli.pipeline.torch.cuda.empty_cache",
+        lambda: attempts.__setitem__("empty_cache", attempts["empty_cache"] + 1),
+    )
+    monkeypatch.setattr(
+        "src.cli.pipeline.torch.cuda.ipc_collect",
+        lambda: attempts.__setitem__("ipc_collect", attempts["ipc_collect"] + 1),
+    )
+
+    config = {
+        "experiment": {
+            "seed": 13,
+            "method": "baseline",
+            "encoder": "wavlm_base",
+            "split_protocol": "paper_faithful",
+            "task_name": "sap_naturalness",
+            "oom_max_retries": 3,
+            "oom_min_budget_sec": 10,
+        },
+        "model": {"name": "wavlm_base", "max_total_sec": 180},
+        "paths": {"results_dir": str(tmp_path / "results"), "metadata_dir": str(tmp_path / "metadata")},
+        "results": {"skip_if_complete": False},
+    }
+
+    run_id = run_experiment(config)
+
+    assert run_id == "success-run"
+    assert attempts["run"] == 1
+    assert attempts["cleanup"] == 1
+    assert attempts["gc"] == 1
+    assert attempts["empty_cache"] == 1
+    assert attempts["ipc_collect"] == 1
 
 
 def test_run_suite_applies_suite_level_config_overrides(monkeypatch, tmp_path) -> None:
