@@ -66,6 +66,7 @@ class HFSSLBackbone(nn.Module):
                 cache_dir=self.load_cache_dir,
                 revision=self.load_revision,
                 local_files_only=local_files_only,
+                use_safetensors=False,
                 config=config,
             )
         )

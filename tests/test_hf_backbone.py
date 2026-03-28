@@ -87,6 +87,7 @@ def test_hf_ssl_backbone_passes_local_files_only_to_loaders(monkeypatch) -> None
     assert all(item["model_id"] == "microsoft/wavlm-base" for item in seen)
     assert all(item["cache_dir"] == "/tmp/hf-cache" for item in seen)
     assert all(item["local_files_only"] is True for item in seen)
+    assert next(item for item in seen if item["loader"] == "model")["use_safetensors"] is False
 
 
 def test_hf_ssl_backbone_prefers_repo_leaf_dir_under_cache(monkeypatch, tmp_path) -> None:
@@ -120,3 +121,4 @@ def test_hf_ssl_backbone_prefers_repo_leaf_dir_under_cache(monkeypatch, tmp_path
     assert all(item["cache_dir"] is None for item in seen)
     assert all(item["revision"] is None for item in seen)
     assert all(item["local_files_only"] is True for item in seen)
+    assert next(item for item in seen if item["loader"] == "model")["use_safetensors"] is False
