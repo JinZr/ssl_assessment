@@ -87,3 +87,36 @@ def test_hf_ssl_backbone_passes_local_files_only_to_loaders(monkeypatch) -> None
     assert all(item["model_id"] == "microsoft/wavlm-base" for item in seen)
     assert all(item["cache_dir"] == "/tmp/hf-cache" for item in seen)
     assert all(item["local_files_only"] is True for item in seen)
+
+
+def test_hf_ssl_backbone_prefers_repo_leaf_dir_under_cache(monkeypatch, tmp_path) -> None:
+    from src.models import hf_ssl_backbone as module
+
+    cache_dir = tmp_path / "huggingface"
+    local_dir = cache_dir / "wavlm-base"
+    local_dir.mkdir(parents=True)
+    seen: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        module.AutoConfig,
+        "from_pretrained",
+        lambda model_id, **kwargs: seen.append({"loader": "config", "model_id": model_id, **kwargs}) or FakeConfig(),
+    )
+    monkeypatch.setattr(
+        module.AutoModel,
+        "from_pretrained",
+        lambda model_id, **kwargs: seen.append({"loader": "model", "model_id": model_id, **kwargs}) or FakeModel(),
+    )
+    monkeypatch.setattr(
+        module.AutoProcessor,
+        "from_pretrained",
+        lambda model_id, **kwargs: seen.append({"loader": "processor", "model_id": model_id, **kwargs}) or FakeProcessor(),
+    )
+
+    HFSSLBackbone("wavlm_base", cache_dir=str(cache_dir), revision="main", local_files_only=True)
+
+    assert [item["loader"] for item in seen] == ["config", "model", "processor"]
+    assert all(item["model_id"] == str(local_dir) for item in seen)
+    assert all(item["cache_dir"] is None for item in seen)
+    assert all(item["revision"] is None for item in seen)
+    assert all(item["local_files_only"] is True for item in seen)

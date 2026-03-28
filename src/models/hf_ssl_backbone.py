@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -44,12 +45,13 @@ class HFSSLBackbone(nn.Module):
         self.revision = revision
         self.local_files_only = local_files_only
         self.output_hidden_states = output_hidden_states
+        self.load_source, self.load_cache_dir, self.load_revision = self._resolve_load_source(cache_dir, revision)
 
         config = retry(
             lambda: AutoConfig.from_pretrained(
-                self.model_id,
-                cache_dir=cache_dir,
-                revision=revision,
+                self.load_source,
+                cache_dir=self.load_cache_dir,
+                revision=self.load_revision,
                 local_files_only=local_files_only,
             )
         )
@@ -60,9 +62,9 @@ class HFSSLBackbone(nn.Module):
 
         self.model = retry(
             lambda: AutoModel.from_pretrained(
-                self.model_id,
-                cache_dir=cache_dir,
-                revision=revision,
+                self.load_source,
+                cache_dir=self.load_cache_dir,
+                revision=self.load_revision,
                 local_files_only=local_files_only,
                 config=config,
             )
@@ -73,13 +75,20 @@ class HFSSLBackbone(nn.Module):
         self.hidden_size = int(config.hidden_size)
         self.config_dict = config.to_dict()
 
+    def _resolve_load_source(self, cache_dir: str | None, revision: str | None) -> tuple[str, str | None, str | None]:
+        if self.local_files_only and cache_dir:
+            local_dir = Path(cache_dir) / self.model_id.rsplit("/", 1)[-1]
+            if local_dir.is_dir():
+                return str(local_dir), None, None
+        return self.model_id, cache_dir, revision
+
     def _load_processor(self, cache_dir: str | None, revision: str | None) -> Any:
         try:
             return retry(
                 lambda: AutoProcessor.from_pretrained(
-                    self.model_id,
-                    cache_dir=cache_dir,
-                    revision=revision,
+                    self.load_source,
+                    cache_dir=self.load_cache_dir,
+                    revision=self.load_revision,
                     local_files_only=self.local_files_only,
                 )
             )
@@ -87,18 +96,18 @@ class HFSSLBackbone(nn.Module):
             try:
                 return retry(
                     lambda: AutoFeatureExtractor.from_pretrained(
-                        self.model_id,
-                        cache_dir=cache_dir,
-                        revision=revision,
+                        self.load_source,
+                        cache_dir=self.load_cache_dir,
+                        revision=self.load_revision,
                         local_files_only=self.local_files_only,
                     )
                 )
             except Exception:
                 return retry(
                     lambda: Wav2Vec2FeatureExtractor.from_pretrained(
-                        self.model_id,
-                        cache_dir=cache_dir,
-                        revision=revision,
+                        self.load_source,
+                        cache_dir=self.load_cache_dir,
+                        revision=self.load_revision,
                         local_files_only=self.local_files_only,
                     )
                 )
