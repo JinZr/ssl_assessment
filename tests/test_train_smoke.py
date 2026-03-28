@@ -9,7 +9,6 @@ import torch
 from src.data.datasets import SpeechCollator
 from src.models.regression import DualHeadSpeechRegressor
 from src.models.hf_ssl_backbone import BackboneOutput
-from src.samplers.dynamic_batch import DynamicDurationBatchSampler
 from src.trainers.base import BaseTrainer
 from src.trainers.baseline_trainer import BaselineTrainer
 from tests.conftest import write_wave
@@ -73,7 +72,7 @@ def test_baseline_trainer_smoke(tmp_path, monkeypatch) -> None:
     test_frame = pd.DataFrame(rows[3:])
     config = {
         "experiment": {"seed": 13, "encoder": "wavlm_base", "method": "baseline", "sap_target": "naturalness"},
-        "training": {"max_epochs": 1, "patience": 1, "gradient_accumulation_steps": 1, "max_total_sec": 180, "precision": "none", "lr": 1e-3},
+        "training": {"max_epochs": 1, "patience": 1, "batch_size": 2, "gradient_accumulation_steps": 1, "precision": "none", "lr": 1e-3},
         "model": {"name": "wavlm_base", "dropout": 0.1},
         "data": {"num_workers": 0, "sample_rate": 16_000},
         "evaluation": {"n_bootstrap": 10},
@@ -98,7 +97,7 @@ def test_speech_collator_falls_back_to_label_when_label_for_loss_missing(tmp_pat
     assert torch.equal(output["labels"], torch.tensor([3.0], dtype=torch.float32))
 
 
-def test_speech_collator_chunks_long_audio_by_max_input_sec(tmp_path) -> None:
+def test_speech_collator_crops_long_audio_by_max_input_sec(tmp_path) -> None:
     audio_path = write_wave(tmp_path / "audio" / "long.wav", duration_sec=0.25)
     collator = SpeechCollator(processor=DummyProcessor(), sampling_rate=16_000, max_input_sec=0.1)
     batch = [
@@ -108,24 +107,38 @@ def test_speech_collator_chunks_long_audio_by_max_input_sec(tmp_path) -> None:
         }
     ]
     output = collator(batch)
-    assert len(output["segment_waveforms"]) == 3
-    assert output["segment_parent_indices"].tolist() == [0, 0, 0]
+    assert len(output["segment_waveforms"]) == 1
+    assert output["segment_parent_indices"].tolist() == [0]
     assert abs(float(output["segment_weights"].sum()) - 1.0) < 1e-6
+    assert abs(float(output["segment_durations_sec"][0]) - 0.1) < 1e-6
 
 
-def test_dynamic_batch_sampler_buckets_by_duration() -> None:
-    sampler = DynamicDurationBatchSampler(
-        durations=[9.0, 8.5, 1.0, 1.0, 1.0, 1.0],
-        max_total_sec=10.0,
-        shuffle=False,
-        bucket_by_duration=True,
+def test_make_loader_uses_fixed_batch_size_without_duration_bucketing(tmp_path) -> None:
+    trainer = BaseTrainer(
+        config={
+            "experiment": {"seed": 13},
+            "training": {"precision": "none", "batch_size": 2},
+            "model": {"name": "wavlm_base"},
+            "data": {"sample_rate": 16_000, "num_workers": 0},
+        },
+        run_dir=tmp_path / "run",
     )
-    batches = list(iter(sampler))
-    assert batches[0] == [0]
-    assert batches[1] == [1, 2]
+    frame = pd.DataFrame(
+        {
+            "audio_path": [f"utt{index}.wav" for index in range(5)],
+            "label": [1.0, 2.0, 3.0, 4.0, 5.0],
+            "duration_sec": [9.0, 8.5, 1.0, 1.0, 1.0],
+        }
+    )
+    loader = trainer._make_loader(frame, DummyProcessor(), train=False)
+    batches = [list(batch) for batch in loader.batch_sampler]
+    trainer.cleanup()
+
+    assert loader.batch_size == 2
+    assert batches == [[0, 1], [2, 3], [4]]
 
 
-def test_trainer_encodes_long_audio_in_multiple_microbatches(tmp_path) -> None:
+def test_trainer_encodes_cropped_long_audio_in_single_microbatch(tmp_path) -> None:
     audio_path = write_wave(tmp_path / "audio" / "long.wav", duration_sec=0.25)
     backbone = DummyHFBackbone()
     model = DualHeadSpeechRegressor(backbone=backbone)
@@ -152,10 +165,10 @@ def test_trainer_encodes_long_audio_in_multiple_microbatches(tmp_path) -> None:
         prediction = trainer._forward(model, batch, mode="dual", stage_cfg={"max_input_sec": 0.1})
     trainer.cleanup()
     assert prediction.shape == (1,)
-    assert backbone.processor.calls == 3
+    assert backbone.processor.calls == 1
 
 
-def test_eval_and_finalize_use_stage_cfg_budget(tmp_path) -> None:
+def test_eval_and_finalize_use_stage_cfg_batch_size_and_crop_limit(tmp_path) -> None:
     audio_path = write_wave(tmp_path / "audio" / "long.wav", duration_sec=0.25)
     backbone = DummyHFBackbone()
     model = DualHeadSpeechRegressor(backbone=backbone)
@@ -177,25 +190,27 @@ def test_eval_and_finalize_use_stage_cfg_budget(tmp_path) -> None:
     trainer = BaseTrainer(
         config={
             "experiment": {"seed": 13},
-            "training": {"precision": "none", "max_total_sec": 0.25, "max_input_sec": 0.25, "gradient_accumulation_steps": 1},
-            "model": {"name": "wavlm_base", "max_total_sec": 0.25, "max_input_sec": 0.25},
+            "training": {"precision": "none", "batch_size": 4, "max_input_sec": 0.25, "gradient_accumulation_steps": 1},
+            "model": {"name": "wavlm_base", "max_input_sec": 0.25},
             "data": {"sample_rate": 16_000, "num_workers": 0},
             "evaluation": {"n_bootstrap": 4},
         },
         run_dir=tmp_path / "run",
     )
-    stage_cfg = {"max_total_sec": 0.1, "max_input_sec": 0.1}
+    stage_cfg = {"batch_size": 1, "max_input_sec": 0.1, "gradient_accumulation_steps": 2}
 
     _, _ = trainer.evaluate_frame(model, frame, mode="dual", stage_cfg=stage_cfg)
-    assert backbone.processor.calls == 3
+    assert backbone.processor.calls == 1
 
     backbone.processor.calls = 0
     trainer.finalize_run(model, test_frame=frame, mode="dual", run_metadata={"seed": 13}, stage_cfg=stage_cfg)
     trainer.cleanup()
 
-    assert backbone.processor.calls == 3
+    assert backbone.processor.calls == 1
     model_info = json.loads((tmp_path / "run" / "model_info.json").read_text(encoding="utf-8"))
-    assert model_info["max_total_sec"] == 0.1
+    assert model_info["batch_size"] == 1
+    assert model_info["effective_batch_size"] == 2
+    assert model_info["accumulation_steps"] == 2
     assert model_info["max_input_sec"] == 0.1
 
 
@@ -245,7 +260,7 @@ def test_training_progress_bar_includes_run_title(tmp_path, monkeypatch) -> None
     test_frame = pd.DataFrame(rows[3:])
     config = {
         "experiment": {"seed": 13, "encoder": "wavlm_base", "method": "baseline", "sap_target": "naturalness"},
-        "training": {"max_epochs": 1, "patience": 1, "gradient_accumulation_steps": 1, "max_total_sec": 180, "precision": "none", "lr": 1e-3},
+        "training": {"max_epochs": 1, "patience": 1, "batch_size": 2, "gradient_accumulation_steps": 1, "precision": "none", "lr": 1e-3},
         "model": {"name": "wavlm_base", "dropout": 0.1},
         "data": {"num_workers": 0, "sample_rate": 16_000},
         "evaluation": {"n_bootstrap": 10},

@@ -30,26 +30,17 @@ class SpeechCollator:
     max_input_sec: float | None = None
 
     def _segment_waveform(self, waveform: torch.Tensor) -> tuple[list[list[float]], list[float], list[float]]:
+        waveform = waveform.detach().cpu().to(torch.float32)
         if self.max_input_sec is None:
             duration_sec = waveform.numel() / self.sampling_rate
-            return [waveform.detach().cpu().to(torch.float32).tolist()], [1.0], [duration_sec]
+            return [waveform.tolist()], [1.0], [duration_sec]
         max_input_samples = max(1, int(round(self.max_input_sec * self.sampling_rate)))
         if waveform.numel() <= max_input_samples:
             duration_sec = waveform.numel() / self.sampling_rate
-            return [waveform.detach().cpu().to(torch.float32).tolist()], [1.0], [duration_sec]
-        total_samples = int(waveform.numel())
-        segments: list[list[float]] = []
-        weights: list[float] = []
-        durations_sec: list[float] = []
-        start = 0
-        while start < total_samples:
-            end = min(start + max_input_samples, total_samples)
-            segment = waveform[start:end]
-            segments.append(segment.detach().cpu().to(torch.float32).tolist())
-            weights.append(float(end - start) / float(total_samples))
-            durations_sec.append((end - start) / self.sampling_rate)
-            start = end
-        return segments, weights, durations_sec
+            return [waveform.tolist()], [1.0], [duration_sec]
+        cropped = waveform[:max_input_samples]
+        duration_sec = cropped.numel() / self.sampling_rate
+        return [cropped.tolist()], [1.0], [duration_sec]
 
     def __call__(self, batch: list[dict[str, Any]]) -> dict[str, Any]:
         waveforms: list[list[float]] = []

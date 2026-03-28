@@ -14,14 +14,13 @@ from torch import nn
 from torch.nn.parallel import DistributedDataParallel
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, DistributedSampler
 from tqdm.auto import tqdm
 
 from src.data.datasets import ManifestDataset, SpeechCollator
 from src.eval.evaluate import build_prediction_frame, metric_payload
 from src.models.hf_ssl_backbone import HFSSLBackbone
 from src.models.regression import DualHeadSpeechRegressor, MultiTaskSpeechRegressor, SpeechRegressor
-from src.samplers.dynamic_batch import DynamicDurationBatchSampler
 from src.utils.distributed import cleanup_distributed, init_distributed, is_distributed, is_main_process
 from src.utils.io import write_csv, write_json
 from src.utils.metrics import compute_metrics
@@ -130,29 +129,21 @@ class BaseTrainer:
             )
         return model
 
-    def _resolve_max_total_sec(self, stage_cfg: dict[str, Any]) -> float:
-        experiment_override = self.config.get("experiment", {}).get("max_total_sec_override")
-        if experiment_override is not None:
-            return float(experiment_override)
-        if stage_cfg is not self.config.get("training") and stage_cfg.get("max_total_sec") is not None:
-            return float(stage_cfg["max_total_sec"])
-        if self.config["model"].get("max_total_sec") is not None:
-            return float(self.config["model"]["max_total_sec"])
-        if self.config.get("training", {}).get("max_total_sec") is not None:
-            return float(self.config["training"]["max_total_sec"])
-        return 180.0
+    def _resolve_batch_size(self, stage_cfg: dict[str, Any]) -> int:
+        if stage_cfg is not self.config.get("training") and stage_cfg.get("batch_size") is not None:
+            return int(stage_cfg["batch_size"])
+        if self.config.get("training", {}).get("batch_size") is not None:
+            return int(self.config["training"]["batch_size"])
+        return 8
 
     def _resolve_max_input_sec(self, stage_cfg: dict[str, Any]) -> float:
-        experiment_override = self.config.get("experiment", {}).get("max_input_sec_override")
-        if experiment_override is not None:
-            return float(experiment_override)
         if stage_cfg is not self.config.get("training") and stage_cfg.get("max_input_sec") is not None:
             return float(stage_cfg["max_input_sec"])
         if self.config["model"].get("max_input_sec") is not None:
             return float(self.config["model"]["max_input_sec"])
         if self.config.get("training", {}).get("max_input_sec") is not None:
             return float(self.config["training"]["max_input_sec"])
-        return self._resolve_max_total_sec(stage_cfg)
+        return 180.0
 
     def _loss_name(self, stage_cfg: dict[str, Any]) -> str:
         return stage_cfg.get("loss", self.config.get("training", {}).get("loss", "mse")).lower()
@@ -179,19 +170,24 @@ class BaseTrainer:
         data_cfg = self.config.get("data", {})
         stage_cfg = stage_cfg or self.config.get("training", {})
         dataset = ManifestDataset(frame)
-        durations = frame.get("duration_sec", pd.Series([1.0] * len(frame))).fillna(1.0).astype(float).tolist()
-        max_total_sec = self._resolve_max_total_sec(stage_cfg)
-        sampler = DynamicDurationBatchSampler(
-            durations=durations,
-            max_total_sec=max_total_sec,
-            shuffle=train,
-            seed=self.config["experiment"]["seed"],
-            rank=self.rank if train else 0,
-            world_size=self.world_size if train else 1,
-        )
+        sampler = None
+        shuffle = train
+        if train and is_distributed():
+            sampler = DistributedSampler(
+                dataset,
+                num_replicas=self.world_size,
+                rank=self.rank,
+                shuffle=True,
+                seed=int(self.config["experiment"]["seed"]),
+                drop_last=False,
+            )
+            shuffle = False
         return DataLoader(
             dataset,
-            batch_sampler=sampler,
+            batch_size=self._resolve_batch_size(stage_cfg),
+            shuffle=shuffle,
+            sampler=sampler,
+            drop_last=False,
             num_workers=data_cfg.get("num_workers", 0),
             pin_memory=self.device.type == "cuda",
             collate_fn=SpeechCollator(
@@ -515,8 +511,8 @@ class BaseTrainer:
 
         max_epochs = int(stage_cfg.get("max_epochs", 30))
         for epoch in range(start_epoch, max_epochs):
-            if hasattr(train_loader.batch_sampler, "set_epoch"):
-                train_loader.batch_sampler.set_epoch(epoch)
+            if hasattr(train_loader.sampler, "set_epoch"):
+                train_loader.sampler.set_epoch(epoch)
             model.train()
             running_loss = 0.0
             num_batches = 0
@@ -616,6 +612,13 @@ class BaseTrainer:
             seed=self.config["experiment"]["seed"],
         )
         if is_main_process(self.rank):
+            batch_size = self._resolve_batch_size(eval_stage_cfg)
+            accumulation_steps = int(
+                eval_stage_cfg.get(
+                    "gradient_accumulation_steps",
+                    self.config.get("training", {}).get("gradient_accumulation_steps", 1),
+                )
+            )
             write_csv(self.run_dir / "test_predictions.csv", prediction_frame)
             write_json(self.run_dir / "test_metrics.json", metrics)
             write_json(
@@ -627,9 +630,9 @@ class BaseTrainer:
                     "resolved_revision": self.config["model"].get("resolved_revision"),
                     "resolved_config": getattr(self._unwrap(model).backbone, "config_dict", {}),
                     "world_size": self.world_size,
-                    "effective_batch_size": self.world_size * self.config["training"].get("gradient_accumulation_steps", 1),
-                    "accumulation_steps": self.config["training"].get("gradient_accumulation_steps", 1),
-                    "max_total_sec": self._resolve_max_total_sec(eval_stage_cfg),
+                    "batch_size": batch_size,
+                    "effective_batch_size": self.world_size * batch_size * accumulation_steps,
+                    "accumulation_steps": accumulation_steps,
                     "max_input_sec": self._resolve_max_input_sec(eval_stage_cfg),
                 },
             )

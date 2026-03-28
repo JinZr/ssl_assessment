@@ -22,6 +22,21 @@ def test_load_config_bundle_resolves_repo_relative_paths() -> None:
     assert config["model"]["cache_dir"] == str((repo_root / "data" / "cache" / "huggingface").resolve())
 
 
+def test_load_config_bundle_keeps_large_model_input_cap() -> None:
+    repo_root = Path("/Users/zrjin/git/ssl_assessment")
+    config = load_config_bundle(
+        repo_root / "configs" / "defaults.yaml",
+        repo_root / "configs" / "paths.yaml",
+        extra_paths=[
+            repo_root / "configs" / "models" / "wavlm_large.yaml",
+            repo_root / "configs" / "experiments" / "baseline.yaml",
+            repo_root / "configs" / "tasks" / "sap_naturalness.yaml",
+        ],
+    )
+
+    assert config["model"]["max_input_sec"] == 90
+
+
 def test_resolved_revision_record_skips_hub_lookup_when_local_files_only() -> None:
     record = resolved_revision_record(
         "wavlm_base",

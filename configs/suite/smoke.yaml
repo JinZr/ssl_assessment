@@ -1,7 +1,8 @@
 prepare: false
 config_overrides:
+  training:
+    batch_size: 2
   model:
-    max_total_sec: 30
     max_input_sec: 15
 models:
   - wavlm_base

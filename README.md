@@ -133,6 +133,7 @@ Reviewer-specific knobs:
 ## Notes
 
 - The suite YAMLs are explicit. The runner should not infer hidden defaults beyond [configs/defaults.yaml](/Users/zrjin/git/ssl_assessment/configs/defaults.yaml).
+- `training.batch_size` now controls loader batching. `max_input_sec` only controls long-utterance chunking during collation and forward microbatching.
 - `paper_faithful` is the only main-matrix protocol. `speaker_disjoint` is declared separately for reviewer reruns only.
 - Large-model reviewer defaults in [configs/suite/reviewer.yaml](/Users/zrjin/git/ssl_assessment/configs/suite/reviewer.yaml) are intentionally narrower than the main suite so they remain tractable.
 - Reviewer controls also reserve explicit hooks for negative-pair controls and Huber-loss supplementary runs; these do not belong in the main matrix.

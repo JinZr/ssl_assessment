@@ -128,7 +128,7 @@ def test_build_sap_task_split_falls_back_when_paper_request_exceeds_available(tm
 def test_run_suite_builds_reviewer_variants_without_alias_methods(monkeypatch, tmp_path) -> None:
     collected: list[dict] = []
 
-    def fake_run_experiment(config, _retry_count: int = 0):  # noqa: ANN001
+    def fake_run_experiment(config):  # noqa: ANN001
         collected.append(config)
         return f"run-{len(collected)}"
 
@@ -214,7 +214,7 @@ def test_run_suite_script_honors_suite_lifecycle_flags(monkeypatch, tmp_path) ->
     assert calls[-1][1]["run_tables"] is False
 
 
-def test_run_experiment_retries_oom_without_recursive_reentry(monkeypatch, tmp_path) -> None:
+def test_run_experiment_fails_fast_on_oom(monkeypatch, tmp_path) -> None:
     from src.cli.pipeline import run_experiment
 
     attempts = {"run": 0, "cleanup": 0, "empty_cache": 0, "ipc_collect": 0, "gc": 0}
@@ -229,8 +229,7 @@ def test_run_experiment_retries_oom_without_recursive_reentry(monkeypatch, tmp_p
 
         def run(self, train_frame, val_frame, test_frame) -> None:  # noqa: ANN001
             attempts["run"] += 1
-            if attempts["run"] < 3:
-                raise RuntimeError("CUDA out of memory. Tried to allocate 20.00 MiB")
+            raise RuntimeError("CUDA out of memory. Tried to allocate 20.00 MiB")
 
         def cleanup(self) -> None:
             attempts["cleanup"] += 1
@@ -267,25 +266,25 @@ def test_run_experiment_retries_oom_without_recursive_reentry(monkeypatch, tmp_p
             "encoder": "wavlm_base",
             "split_protocol": "paper_faithful",
             "task_name": "sap_naturalness",
-            "oom_max_retries": 3,
-            "oom_min_budget_sec": 10,
         },
-        "model": {"name": "wavlm_base", "max_total_sec": 180},
+        "model": {"name": "wavlm_base"},
         "paths": {"results_dir": str(tmp_path / "results"), "metadata_dir": str(tmp_path / "metadata")},
         "results": {"skip_if_complete": False},
     }
 
-    run_id = run_experiment(config)
+    try:
+        run_experiment(config)
+        raise AssertionError("Expected OOM to be re-raised")
+    except RuntimeError as error:
+        assert "out of memory" in str(error).lower()
 
-    assert run_id == "oom-run"
-    assert attempts["run"] == 3
-    assert attempts["cleanup"] == 3
-    assert attempts["gc"] == 3
-    assert attempts["empty_cache"] == 3
-    assert attempts["ipc_collect"] == 3
-    assert [status for status, _ in statuses] == ["running", "oom_retry", "running", "oom_retry", "running", "complete"]
-    assert dumped_configs[-1]["experiment"]["max_total_sec_override"] == 45
-    assert dumped_configs[-1]["experiment"]["max_input_sec_override"] == 45
+    assert attempts["run"] == 1
+    assert attempts["cleanup"] == 1
+    assert attempts["gc"] == 1
+    assert attempts["empty_cache"] == 1
+    assert attempts["ipc_collect"] == 1
+    assert [status for status, _ in statuses] == ["running", "failed"]
+    assert dumped_configs == [config]
 
 
 def test_run_experiment_cleans_up_cuda_cache_after_success(monkeypatch, tmp_path) -> None:
@@ -331,10 +330,8 @@ def test_run_experiment_cleans_up_cuda_cache_after_success(monkeypatch, tmp_path
             "encoder": "wavlm_base",
             "split_protocol": "paper_faithful",
             "task_name": "sap_naturalness",
-            "oom_max_retries": 3,
-            "oom_min_budget_sec": 10,
         },
-        "model": {"name": "wavlm_base", "max_total_sec": 180},
+        "model": {"name": "wavlm_base"},
         "paths": {"results_dir": str(tmp_path / "results"), "metadata_dir": str(tmp_path / "metadata")},
         "results": {"skip_if_complete": False},
     }
@@ -352,7 +349,7 @@ def test_run_experiment_cleans_up_cuda_cache_after_success(monkeypatch, tmp_path
 def test_run_suite_applies_suite_level_config_overrides(monkeypatch, tmp_path) -> None:
     collected: list[dict] = []
 
-    def fake_run_experiment(config, _retry_count: int = 0):  # noqa: ANN001
+    def fake_run_experiment(config):  # noqa: ANN001
         collected.append(config)
         return f"run-{len(collected)}"
 
@@ -364,8 +361,10 @@ def test_run_suite_applies_suite_level_config_overrides(monkeypatch, tmp_path) -
             {
                 "suite_name": "override_test",
                 "config_overrides": {
+                    "training": {
+                        "batch_size": 4,
+                    },
                     "model": {
-                        "max_total_sec": 45,
                         "max_input_sec": 30,
                     }
                 },
@@ -384,7 +383,7 @@ def test_run_suite_applies_suite_level_config_overrides(monkeypatch, tmp_path) -
     run_suite(repo_root, suite_path)
 
     assert len(collected) == 1
-    assert collected[0]["model"]["max_total_sec"] == 45
+    assert collected[0]["training"]["batch_size"] == 4
     assert collected[0]["model"]["max_input_sec"] == 30
 
 
@@ -400,9 +399,9 @@ def test_format_compact_exception_filters_site_packages_frames(monkeypatch, tmp_
         ),
         traceback.FrameSummary(
             filename=str(tmp_path / "src" / "cli" / "pipeline.py"),
-            lineno=328,
+            lineno=290,
             name="run_experiment",
-            line="write_run_status(run_dir, 'oom_retry', {'max_total_sec': next_budget})",
+            line="trainer.run(train_frame, val_frame, test_frame)",
         ),
     ]
     monkeypatch.setattr("src.utils.cli.traceback.extract_tb", lambda tb: frames)
@@ -411,4 +410,4 @@ def test_format_compact_exception_filters_site_packages_frames(monkeypatch, tmp_
 
     assert "RuntimeError: CUDA out of memory" in rendered
     assert "site-packages" not in rendered
-    assert "src/cli/pipeline.py:328 in run_experiment" in rendered
+    assert "src/cli/pipeline.py:290 in run_experiment" in rendered

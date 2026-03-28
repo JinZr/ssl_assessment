@@ -9,7 +9,6 @@ class ModelSpec:
     model_name: str
     model_id: str
     family: str
-    default_max_total_sec: int
     gradient_checkpointing: bool
 
 
@@ -19,7 +18,6 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         model_name="w2v2_base",
         model_id="facebook/wav2vec2-base",
         family="wav2vec2",
-        default_max_total_sec=180,
         gradient_checkpointing=False,
     ),
     "w2v2_large_lv60": ModelSpec(
@@ -27,7 +25,6 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         model_name="w2v2_large_lv60",
         model_id="facebook/wav2vec2-large-lv60",
         family="wav2vec2",
-        default_max_total_sec=90,
         gradient_checkpointing=True,
     ),
     "w2v2_large_robust": ModelSpec(
@@ -35,7 +32,6 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         model_name="w2v2_large_robust",
         model_id="facebook/wav2vec2-large-robust",
         family="wav2vec2",
-        default_max_total_sec=90,
         gradient_checkpointing=True,
     ),
     "hubert_base": ModelSpec(
@@ -43,7 +39,6 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         model_name="hubert_base",
         model_id="facebook/hubert-base-ls960",
         family="hubert",
-        default_max_total_sec=180,
         gradient_checkpointing=False,
     ),
     "hubert_large": ModelSpec(
@@ -51,7 +46,6 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         model_name="hubert_large",
         model_id="facebook/hubert-large-ll60k",
         family="hubert",
-        default_max_total_sec=90,
         gradient_checkpointing=True,
     ),
     "wavlm_base": ModelSpec(
@@ -59,7 +53,6 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         model_name="wavlm_base",
         model_id="microsoft/wavlm-base",
         family="wavlm",
-        default_max_total_sec=180,
         gradient_checkpointing=False,
     ),
     "wavlm_base_plus": ModelSpec(
@@ -67,7 +60,6 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         model_name="wavlm_base_plus",
         model_id="microsoft/wavlm-base-plus",
         family="wavlm",
-        default_max_total_sec=180,
         gradient_checkpointing=False,
     ),
     "wavlm_large": ModelSpec(
@@ -75,7 +67,6 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         model_name="wavlm_large",
         model_id="microsoft/wavlm-large",
         family="wavlm",
-        default_max_total_sec=90,
         gradient_checkpointing=True,
     ),
 }

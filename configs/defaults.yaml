@@ -8,8 +8,6 @@ experiment:
   sap_target: null
   qs_aux: null
   stage: train
-  oom_max_retries: 3
-  oom_min_budget_sec: 10
 
 training:
   optimizer: adamw
@@ -24,8 +22,8 @@ training:
   max_epochs: 30
   patience: 5
   precision: auto
+  batch_size: 8
   gradient_accumulation_steps: 1
-  max_total_sec: 180
   resume: true
 
 data:
@@ -50,7 +48,6 @@ model:
   layerdrop: 0.0
   head_hidden_dim: null
   dropout: 0.1
-  max_total_sec: 180
   gradient_checkpointing: false
   output_hidden_states: false
 
