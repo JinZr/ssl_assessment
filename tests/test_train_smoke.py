@@ -97,9 +97,9 @@ def test_speech_collator_falls_back_to_label_when_label_for_loss_missing(tmp_pat
     assert torch.equal(output["labels"], torch.tensor([3.0], dtype=torch.float32))
 
 
-def test_speech_collator_crops_long_audio_by_max_input_sec(tmp_path) -> None:
+def test_speech_collator_keeps_full_audio_waveform(tmp_path) -> None:
     audio_path = write_wave(tmp_path / "audio" / "long.wav", duration_sec=0.25)
-    collator = SpeechCollator(processor=DummyProcessor(), sampling_rate=16_000, max_input_sec=0.1)
+    collator = SpeechCollator(processor=DummyProcessor(), sampling_rate=16_000)
     batch = [
         {
             "audio_path": str(audio_path),
@@ -107,10 +107,8 @@ def test_speech_collator_crops_long_audio_by_max_input_sec(tmp_path) -> None:
         }
     ]
     output = collator(batch)
-    assert len(output["segment_waveforms"]) == 1
-    assert output["segment_parent_indices"].tolist() == [0]
-    assert abs(float(output["segment_weights"].sum()) - 1.0) < 1e-6
-    assert abs(float(output["segment_durations_sec"][0]) - 0.1) < 1e-6
+    assert len(output["waveforms"]) == 1
+    assert len(output["waveforms"][0]) == 4_000
 
 
 def test_make_loader_uses_fixed_batch_size_without_duration_bucketing(tmp_path) -> None:
@@ -138,16 +136,25 @@ def test_make_loader_uses_fixed_batch_size_without_duration_bucketing(tmp_path) 
     assert batches == [[0, 1], [2, 3], [4]]
 
 
-def test_trainer_encodes_cropped_long_audio_in_single_microbatch(tmp_path) -> None:
-    audio_path = write_wave(tmp_path / "audio" / "long.wav", duration_sec=0.25)
+def test_trainer_encodes_full_batch_in_single_backbone_call(tmp_path) -> None:
+    audio_dir = tmp_path / "audio"
+    audio_paths = [
+        write_wave(audio_dir / "utt0.wav", duration_sec=0.25),
+        write_wave(audio_dir / "utt1.wav", duration_sec=0.2),
+    ]
     backbone = DummyHFBackbone()
     model = DualHeadSpeechRegressor(backbone=backbone)
-    collator = SpeechCollator(processor=backbone.processor, sampling_rate=16_000, max_input_sec=0.1)
+    collator = SpeechCollator(processor=backbone.processor, sampling_rate=16_000)
     batch = collator(
         [
             {
-                "audio_path": str(audio_path),
+                "audio_path": str(audio_paths[0]),
                 "label": 1.0,
+                "domain": "sap",
+            },
+            {
+                "audio_path": str(audio_paths[1]),
+                "label": 2.0,
                 "domain": "sap",
             }
         ]
@@ -155,20 +162,20 @@ def test_trainer_encodes_cropped_long_audio_in_single_microbatch(tmp_path) -> No
     trainer = BaseTrainer(
         config={
             "experiment": {"seed": 13},
-            "training": {"precision": "none", "max_input_sec": 0.1},
-            "model": {"name": "wavlm_base", "max_input_sec": 0.1},
+            "training": {"precision": "none"},
+            "model": {"name": "wavlm_base"},
             "data": {"sample_rate": 16_000},
         },
         run_dir=tmp_path / "run",
     )
     with torch.no_grad():
-        prediction = trainer._forward(model, batch, mode="dual", stage_cfg={"max_input_sec": 0.1})
+        prediction = trainer._forward(model, batch, mode="dual", stage_cfg={})
     trainer.cleanup()
-    assert prediction.shape == (1,)
+    assert prediction.shape == (2,)
     assert backbone.processor.calls == 1
 
 
-def test_eval_and_finalize_use_stage_cfg_batch_size_and_crop_limit(tmp_path) -> None:
+def test_eval_and_finalize_use_stage_cfg_batch_size(tmp_path) -> None:
     audio_path = write_wave(tmp_path / "audio" / "long.wav", duration_sec=0.25)
     backbone = DummyHFBackbone()
     model = DualHeadSpeechRegressor(backbone=backbone)
@@ -190,14 +197,14 @@ def test_eval_and_finalize_use_stage_cfg_batch_size_and_crop_limit(tmp_path) -> 
     trainer = BaseTrainer(
         config={
             "experiment": {"seed": 13},
-            "training": {"precision": "none", "batch_size": 4, "max_input_sec": 0.25, "gradient_accumulation_steps": 1},
-            "model": {"name": "wavlm_base", "max_input_sec": 0.25},
+            "training": {"precision": "none", "batch_size": 4, "gradient_accumulation_steps": 1},
+            "model": {"name": "wavlm_base"},
             "data": {"sample_rate": 16_000, "num_workers": 0},
             "evaluation": {"n_bootstrap": 4},
         },
         run_dir=tmp_path / "run",
     )
-    stage_cfg = {"batch_size": 1, "max_input_sec": 0.1, "gradient_accumulation_steps": 2}
+    stage_cfg = {"batch_size": 1, "gradient_accumulation_steps": 2}
 
     _, _ = trainer.evaluate_frame(model, frame, mode="dual", stage_cfg=stage_cfg)
     assert backbone.processor.calls == 1
@@ -211,7 +218,6 @@ def test_eval_and_finalize_use_stage_cfg_batch_size_and_crop_limit(tmp_path) -> 
     assert model_info["batch_size"] == 1
     assert model_info["effective_batch_size"] == 2
     assert model_info["accumulation_steps"] == 2
-    assert model_info["max_input_sec"] == 0.1
 
 
 def test_training_progress_bar_includes_run_title(tmp_path, monkeypatch) -> None:

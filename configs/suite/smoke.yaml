@@ -1,9 +1,7 @@
 prepare: false
 config_overrides:
   training:
-    batch_size: 2
-  model:
-    max_input_sec: 15
+    batch_size: 1
 models:
   - wavlm_base
 tasks:

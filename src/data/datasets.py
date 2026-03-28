@@ -27,44 +27,20 @@ class SpeechCollator:
     processor: Any
     sampling_rate: int = 16_000
     multitask_task_ids: list[str] | None = None
-    max_input_sec: float | None = None
-
-    def _segment_waveform(self, waveform: torch.Tensor) -> tuple[list[list[float]], list[float], list[float]]:
-        waveform = waveform.detach().cpu().to(torch.float32)
-        if self.max_input_sec is None:
-            duration_sec = waveform.numel() / self.sampling_rate
-            return [waveform.tolist()], [1.0], [duration_sec]
-        max_input_samples = max(1, int(round(self.max_input_sec * self.sampling_rate)))
-        if waveform.numel() <= max_input_samples:
-            duration_sec = waveform.numel() / self.sampling_rate
-            return [waveform.tolist()], [1.0], [duration_sec]
-        cropped = waveform[:max_input_samples]
-        duration_sec = cropped.numel() / self.sampling_rate
-        return [cropped.tolist()], [1.0], [duration_sec]
 
     def __call__(self, batch: list[dict[str, Any]]) -> dict[str, Any]:
         waveforms: list[list[float]] = []
-        segment_parent_indices: list[int] = []
-        segment_weights: list[float] = []
-        segment_durations_sec: list[float] = []
-        for item_index, item in enumerate(batch):
+        for item in batch:
             waveform, _ = load_audio(item["audio_path"], target_sample_rate=self.sampling_rate)
-            segments, weights, durations = self._segment_waveform(waveform)
-            waveforms.extend(segments)
-            segment_parent_indices.extend([item_index] * len(segments))
-            segment_weights.extend(weights)
-            segment_durations_sec.extend(durations)
+            waveforms.append(waveform.detach().cpu().to(torch.float32).tolist())
         labels = torch.tensor(
             [float(item["label_for_loss"] if "label_for_loss" in item else item["label"]) for item in batch],
             dtype=torch.float32,
         )
         batch_dict = {
-            "segment_waveforms": waveforms,
+            "waveforms": waveforms,
             "labels": labels,
             "metadata": batch,
-            "segment_parent_indices": torch.tensor(segment_parent_indices, dtype=torch.long),
-            "segment_weights": torch.tensor(segment_weights, dtype=torch.float32),
-            "segment_durations_sec": torch.tensor(segment_durations_sec, dtype=torch.float32),
         }
         if "task_id" in batch[0]:
             batch_dict["task_ids"] = [item["task_id"] for item in batch]

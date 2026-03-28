@@ -244,6 +244,24 @@ def _cleanup_after_run(trainer: Any) -> None:
             torch.cuda.ipc_collect()
 
 
+def _is_oom_error(error: BaseException) -> bool:
+    current: BaseException | None = error
+    while current is not None:
+        if "out of memory" in str(current).lower():
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _shrink_oom_budget(config: dict[str, Any]) -> bool:
+    training_cfg = config.setdefault("training", {})
+    current_batch_size = int(training_cfg.get("batch_size", 8))
+    if current_batch_size <= 1:
+        return False
+    training_cfg["batch_size"] = max(1, current_batch_size // 2)
+    return True
+
+
 def run_experiment(config: dict[str, Any]) -> str:
     config = deepcopy(config)
     seed_everything(int(config["experiment"]["seed"]))
@@ -255,45 +273,50 @@ def run_experiment(config: dict[str, Any]) -> str:
         if status.get("status") == "complete":
             return run_id
     config = _resolve_and_lock_model_revision(config)
-    dump_yaml(run_dir / "config_resolved.yaml", config)
-    write_run_status(run_dir, "running")
-    trainer = None
-    try:
-        method = config["experiment"]["method"]
-        if method == "baseline":
-            train_frame, val_frame, test_frame = _load_task_frames(config)
-            trainer = BaselineTrainer(config, run_dir)
-            trainer.run(train_frame, val_frame, test_frame)
-        elif method in {"jt", "jt_shuffled"}:
-            sap_train, sap_val, sap_test, qs_train, _ = _load_pair_frames(config)
-            if method == "jt_shuffled":
-                qs_train = _shuffle_aux_labels(qs_train, int(config["experiment"]["seed"]))
-            trainer = JTTrainer(config, run_dir)
-            trainer.run(sap_train, sap_val, sap_test, qs_train)
-        elif method == "dual_head_jt":
-            sap_train, sap_val, sap_test, qs_train, _ = _load_pair_frames(config)
-            trainer = DualHeadJTTrainer(config, run_dir)
-            trainer.run(sap_train, sap_val, sap_test, qs_train)
-        elif method in {"ft", "ft_shuffled"}:
-            sap_train, sap_val, sap_test, qs_train, qs_val = _load_pair_frames(config)
-            if method == "ft_shuffled":
-                qs_train = _shuffle_aux_labels(qs_train, int(config["experiment"]["seed"]))
-                qs_val = _shuffle_aux_labels(qs_val, int(config["experiment"]["seed"]) + 1)
-            trainer = FTTrainer(config, run_dir)
-            trainer.run(qs_train, qs_val, sap_train, sap_val, sap_test)
-        elif method == "sap_multi_task":
-            train_frame, val_frame, test_frame = _build_multitask_frames(config)
-            trainer = SAPMultiTaskTrainer(config, run_dir)
-            trainer.run(train_frame, val_frame, test_frame)
-        else:
-            raise ValueError(f"Unsupported experiment method: {method}")
-        write_run_status(run_dir, "complete", {"run_id": run_id})
-        return run_id
-    except Exception as error:
-        write_run_status(run_dir, "failed", {"error": str(error)})
-        raise
-    finally:
-        if trainer is not None:
+    retries_remaining = int(config.get("training", {}).get("oom_max_retries", 0))
+    while True:
+        dump_yaml(run_dir / "config_resolved.yaml", config)
+        write_run_status(run_dir, "running")
+        trainer = None
+        should_retry = False
+        try:
+            method = config["experiment"]["method"]
+            if method == "baseline":
+                train_frame, val_frame, test_frame = _load_task_frames(config)
+                trainer = BaselineTrainer(config, run_dir)
+                trainer.run(train_frame, val_frame, test_frame)
+            elif method in {"jt", "jt_shuffled"}:
+                sap_train, sap_val, sap_test, qs_train, _ = _load_pair_frames(config)
+                if method == "jt_shuffled":
+                    qs_train = _shuffle_aux_labels(qs_train, int(config["experiment"]["seed"]))
+                trainer = JTTrainer(config, run_dir)
+                trainer.run(sap_train, sap_val, sap_test, qs_train)
+            elif method == "dual_head_jt":
+                sap_train, sap_val, sap_test, qs_train, _ = _load_pair_frames(config)
+                trainer = DualHeadJTTrainer(config, run_dir)
+                trainer.run(sap_train, sap_val, sap_test, qs_train)
+            elif method in {"ft", "ft_shuffled"}:
+                sap_train, sap_val, sap_test, qs_train, qs_val = _load_pair_frames(config)
+                if method == "ft_shuffled":
+                    qs_train = _shuffle_aux_labels(qs_train, int(config["experiment"]["seed"]))
+                    qs_val = _shuffle_aux_labels(qs_val, int(config["experiment"]["seed"]) + 1)
+                trainer = FTTrainer(config, run_dir)
+                trainer.run(qs_train, qs_val, sap_train, sap_val, sap_test)
+            elif method == "sap_multi_task":
+                train_frame, val_frame, test_frame = _build_multitask_frames(config)
+                trainer = SAPMultiTaskTrainer(config, run_dir)
+                trainer.run(train_frame, val_frame, test_frame)
+            else:
+                raise ValueError(f"Unsupported experiment method: {method}")
+            write_run_status(run_dir, "complete", {"run_id": run_id})
+            return run_id
+        except Exception as error:
+            should_retry = retries_remaining > 0 and _is_oom_error(error) and _shrink_oom_budget(config)
+            if not should_retry:
+                write_run_status(run_dir, "failed", {"error": str(error)})
+                raise
+            retries_remaining -= 1
+        finally:
             _cleanup_after_run(trainer)
 
 
