@@ -26,12 +26,24 @@ class ManifestDataset(Dataset):
 class SpeechCollator:
     processor: Any
     sampling_rate: int = 16_000
+    max_input_sec: float | None = None
     multitask_task_ids: list[str] | None = None
+
+    def _max_input_samples(self) -> int | None:
+        if self.max_input_sec is None:
+            return None
+        max_input_sec = float(self.max_input_sec)
+        if max_input_sec <= 0:
+            return None
+        return max(1, int(round(max_input_sec * self.sampling_rate)))
 
     def __call__(self, batch: list[dict[str, Any]]) -> dict[str, Any]:
         waveforms: list[list[float]] = []
+        max_input_samples = self._max_input_samples()
         for item in batch:
             waveform, _ = load_audio(item["audio_path"], target_sample_rate=self.sampling_rate)
+            if max_input_samples is not None and waveform.shape[0] > max_input_samples:
+                waveform = waveform[:max_input_samples]
             waveforms.append(waveform.detach().cpu().to(torch.float32).tolist())
         labels = torch.tensor(
             [float(item["label_for_loss"] if "label_for_loss" in item else item["label"]) for item in batch],

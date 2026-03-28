@@ -97,7 +97,7 @@ def test_speech_collator_falls_back_to_label_when_label_for_loss_missing(tmp_pat
     assert torch.equal(output["labels"], torch.tensor([3.0], dtype=torch.float32))
 
 
-def test_speech_collator_keeps_full_audio_waveform(tmp_path) -> None:
+def test_speech_collator_keeps_full_audio_waveform_without_input_cap(tmp_path) -> None:
     audio_path = write_wave(tmp_path / "audio" / "long.wav", duration_sec=0.25)
     collator = SpeechCollator(processor=DummyProcessor(), sampling_rate=16_000)
     batch = [
@@ -109,6 +109,20 @@ def test_speech_collator_keeps_full_audio_waveform(tmp_path) -> None:
     output = collator(batch)
     assert len(output["waveforms"]) == 1
     assert len(output["waveforms"][0]) == 4_000
+
+
+def test_speech_collator_truncates_waveform_to_max_input_sec(tmp_path) -> None:
+    audio_path = write_wave(tmp_path / "audio" / "long.wav", duration_sec=0.25)
+    collator = SpeechCollator(processor=DummyProcessor(), sampling_rate=16_000, max_input_sec=0.1)
+    batch = [
+        {
+            "audio_path": str(audio_path),
+            "label": 1.0,
+        }
+    ]
+    output = collator(batch)
+    assert len(output["waveforms"]) == 1
+    assert len(output["waveforms"][0]) == 1_600
 
 
 def test_make_loader_uses_fixed_batch_size_without_duration_bucketing(tmp_path) -> None:

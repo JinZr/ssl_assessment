@@ -359,6 +359,78 @@ def test_run_experiment_retries_on_oom_with_smaller_budget(monkeypatch, tmp_path
     assert [payload["training"]["batch_size"] for payload in dumped_configs] == [8, 4, 2]
 
 
+def test_run_experiment_retries_on_oom_with_smaller_input_cap(monkeypatch, tmp_path) -> None:
+    from src.cli.pipeline import run_experiment
+
+    attempts = {"run": 0, "cleanup": 0, "empty_cache": 0, "ipc_collect": 0, "gc": 0}
+    statuses: list[tuple[str, dict | None]] = []
+    dumped_configs: list[dict] = []
+    frame = pd.DataFrame({"utt_id": ["utt0"], "label": [1.0]})
+
+    class FakeTrainer:
+        def __init__(self, config, run_dir) -> None:  # noqa: ANN001
+            self.config = config
+            self.run_dir = run_dir
+
+        def run(self, train_frame, val_frame, test_frame) -> None:  # noqa: ANN001
+            attempts["run"] += 1
+            if attempts["run"] < 3:
+                raise RuntimeError("CUDA out of memory. Tried to allocate 20.00 MiB")
+
+        def cleanup(self) -> None:
+            attempts["cleanup"] += 1
+
+    monkeypatch.setattr("src.cli.pipeline.seed_everything", lambda seed: None)
+    monkeypatch.setattr("src.cli.pipeline.build_run_id", lambda experiment: "oom-input-cap-run")
+    monkeypatch.setattr("src.cli.pipeline.run_complete", lambda run_dir: False)
+    monkeypatch.setattr("src.cli.pipeline._resolve_and_lock_model_revision", lambda config: config)
+    monkeypatch.setattr("src.cli.pipeline._load_task_frames", lambda config: (frame, frame, frame))
+    monkeypatch.setattr("src.cli.pipeline.BaselineTrainer", FakeTrainer)
+    monkeypatch.setattr(
+        "src.cli.pipeline.dump_yaml",
+        lambda path, payload: dumped_configs.append(deepcopy(payload)),
+    )
+    monkeypatch.setattr(
+        "src.cli.pipeline.write_run_status",
+        lambda run_dir, status, extra=None: statuses.append((status, deepcopy(extra))),
+    )
+    monkeypatch.setattr("src.cli.pipeline.gc.collect", lambda: attempts.__setitem__("gc", attempts["gc"] + 1) or 0)
+    monkeypatch.setattr("src.cli.pipeline.torch.cuda.is_available", lambda: True)
+    monkeypatch.setattr(
+        "src.cli.pipeline.torch.cuda.empty_cache",
+        lambda: attempts.__setitem__("empty_cache", attempts["empty_cache"] + 1),
+    )
+    monkeypatch.setattr(
+        "src.cli.pipeline.torch.cuda.ipc_collect",
+        lambda: attempts.__setitem__("ipc_collect", attempts["ipc_collect"] + 1),
+    )
+
+    config = {
+        "experiment": {
+            "seed": 13,
+            "method": "baseline",
+            "encoder": "wavlm_base",
+            "split_protocol": "paper_faithful",
+            "task_name": "sap_naturalness",
+        },
+        "training": {"oom_max_retries": 2, "batch_size": 1},
+        "model": {"name": "wavlm_base", "max_input_sec": 30},
+        "paths": {"results_dir": str(tmp_path / "results"), "metadata_dir": str(tmp_path / "metadata")},
+        "results": {"skip_if_complete": False},
+    }
+
+    run_id = run_experiment(config)
+
+    assert run_id == "oom-input-cap-run"
+    assert attempts["run"] == 3
+    assert attempts["cleanup"] == 3
+    assert attempts["gc"] == 3
+    assert attempts["empty_cache"] == 3
+    assert attempts["ipc_collect"] == 3
+    assert [status for status, _ in statuses] == ["running", "running", "running", "complete"]
+    assert [payload["model"]["max_input_sec"] for payload in dumped_configs] == [30, 15.0, 7.5]
+
+
 def test_run_experiment_cleans_up_cuda_cache_after_success(monkeypatch, tmp_path) -> None:
     from src.cli.pipeline import run_experiment
 

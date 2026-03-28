@@ -184,6 +184,7 @@ class BaseTrainer:
             collate_fn=SpeechCollator(
                 processor=processor,
                 sampling_rate=data_cfg.get("sample_rate", 16_000),
+                max_input_sec=self.config.get("model", {}).get("max_input_sec"),
                 multitask_task_ids=multitask_task_ids,
             ),
         )

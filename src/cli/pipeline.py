@@ -257,7 +257,15 @@ def _shrink_oom_budget(config: dict[str, Any]) -> bool:
     training_cfg = config.setdefault("training", {})
     current_batch_size = int(training_cfg.get("batch_size", 8))
     if current_batch_size <= 1:
-        return False
+        model_cfg = config.setdefault("model", {})
+        current_max_input_sec = model_cfg.get("max_input_sec")
+        if current_max_input_sec is None:
+            return False
+        current_max_input_sec = float(current_max_input_sec)
+        if current_max_input_sec <= 5:
+            return False
+        model_cfg["max_input_sec"] = max(5.0, current_max_input_sec / 2.0)
+        return True
     training_cfg["batch_size"] = max(1, current_batch_size // 2)
     return True
 
