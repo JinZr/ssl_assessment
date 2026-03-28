@@ -24,15 +24,18 @@ DEFAULT_AUDIO_PROBE_WORKERS = max(1, min(8, os.cpu_count() or 1))
 
 def load_audio(path: str | Path, target_sample_rate: int = TARGET_SAMPLE_RATE) -> tuple[torch.Tensor, int]:
     if torchaudio is not None:
-        waveform, sample_rate = torchaudio.load(str(path))
-        if waveform.ndim == 2 and waveform.shape[0] > 1:
-            waveform = waveform.mean(dim=0, keepdim=True)
-        if sample_rate != target_sample_rate:
-            resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=target_sample_rate)
-            waveform = resampler(waveform)
-            sample_rate = target_sample_rate
-        waveform = waveform.to(torch.float32)
-        return waveform.squeeze(0), sample_rate
+        try:
+            waveform, sample_rate = torchaudio.load(str(path))
+            if waveform.ndim == 2 and waveform.shape[0] > 1:
+                waveform = waveform.mean(dim=0, keepdim=True)
+            if sample_rate != target_sample_rate:
+                resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=target_sample_rate)
+                waveform = resampler(waveform)
+                sample_rate = target_sample_rate
+            waveform = waveform.to(torch.float32)
+            return waveform.squeeze(0), sample_rate
+        except Exception:
+            pass
 
     sample_rate, waveform_np = wavfile.read(str(path))
     original_dtype = waveform_np.dtype

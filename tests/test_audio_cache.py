@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import torch
+
 from src.utils import audio
 from tests.conftest import write_wave
 
@@ -22,3 +24,20 @@ def test_probe_audio_many_reuses_cache(tmp_path, monkeypatch) -> None:
     assert str(audio_path) in first
     assert first == second
 
+
+def test_load_audio_falls_back_when_torchaudio_backend_is_unavailable(tmp_path, monkeypatch) -> None:
+    audio_path = write_wave(tmp_path / "sample.wav", sample_rate=8_000)
+
+    class BrokenTorchaudio:
+        @staticmethod
+        def load(path):  # noqa: ANN001
+            raise RuntimeError("Couldn't find appropriate backend")
+
+    monkeypatch.setattr(audio, "torchaudio", BrokenTorchaudio())
+
+    waveform, sample_rate = audio.load_audio(audio_path, target_sample_rate=16_000)
+
+    assert sample_rate == 16_000
+    assert waveform.dtype == torch.float32
+    assert waveform.ndim == 1
+    assert waveform.numel() == 4_000
